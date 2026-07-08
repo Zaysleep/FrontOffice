@@ -513,26 +513,26 @@ function TrendingRow({ rank, topic, meta, description, onOpen }: { rank: number;
       <button
          type="button"
          onClick={onOpen}
-         className="grid min-h-16 w-full grid-cols-[32px_minmax(0,1fr)] gap-3 px-4 py-5 text-left transition hover:bg-[#FFFCF6] focus:outline-none focus:ring-4 focus:ring-inset focus:ring-[#1E40AF]/20 sm:grid-cols-[42px_minmax(0,1fr)_110px] sm:gap-4 sm:px-6 md:px-7"
+         className="grid min-h-16 w-full grid-cols-[32px_minmax(0,1fr)] gap-x-3 gap-y-4 px-4 py-5 text-left transition hover:bg-[#FFFCF6] focus:outline-none focus:ring-4 focus:ring-inset focus:ring-[#1E40AF]/20 sm:grid-cols-[42px_minmax(0,1fr)_110px] sm:gap-4 sm:px-6 md:px-7"
       >
-         <div className="text-2xl font-black text-[#C2410C]">{rank}</div>
+         <div className="pt-0.5 text-2xl font-black leading-none text-[#C2410C]">{rank}</div>
 
          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-               <TrendingUp aria-hidden="true" className="h-4 w-4 shrink-0 text-[#C2410C]" />
+            <div className="flex items-start gap-2">
+               <TrendingUp aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-[#C2410C]" />
 
-               <p className="text-lg font-black uppercase leading-[1.05] tracking-[-0.01em] text-[#111827]">{topic}</p>
+               <p className="break-words text-base font-black uppercase leading-[1.12] tracking-[-0.01em] text-[#111827] sm:text-lg">{topic}</p>
             </div>
 
-            <p className="mt-2 text-sm leading-6 text-[#5B6475]">{description}</p>
+            <p className="mt-3 max-w-xl text-[15px] leading-6 text-[#5B6475]">{description}</p>
 
-            <p className="mt-2 text-[11px] font-black uppercase tracking-[0.12em] text-[#1E40AF]">View team discussion</p>
+            <p className="mt-3 text-[11px] font-black uppercase tracking-[0.12em] text-[#1E40AF]">View team discussion</p>
          </div>
 
-         <div className="sm:text-right">
+         <div className="col-start-2 flex items-end justify-between gap-4 border-t border-[#E7DCCB] pt-3 sm:col-start-auto sm:block sm:border-t-0 sm:pt-0 sm:text-right">
             <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#5B6475]">Activity</p>
 
-            <p className="mt-1 text-sm font-bold text-[#111827]">{meta}</p>
+            <p className="text-sm font-bold text-[#111827] sm:mt-1">{meta}</p>
          </div>
       </button>
    );
