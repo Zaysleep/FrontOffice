@@ -365,6 +365,8 @@ function FrontOfficeApp() {
 
    const [frontOfficeCopy, setFrontOfficeCopy] = useState<FrontOfficeReportCopy>(() => getRandomReportCopy());
 
+   const [hasHandledPushDeepLink, setHasHandledPushDeepLink] = useState(false);
+
    useEffect(() => {
       let isMounted = true;
 
@@ -829,6 +831,58 @@ function FrontOfficeApp() {
          isMounted = false;
       };
    }, [isAccountLoading, userProfile.handle]);
+
+   useEffect(() => {
+      if (hasHandledPushDeepLink || isAccountLoading || isSocialLoading || typeof window === "undefined") {
+         return;
+      }
+
+      const params = new URLSearchParams(window.location.search);
+
+      const section = params.get("section");
+
+      if (!section) {
+         setHasHandledPushDeepLink(true);
+         return;
+      }
+
+      if (section === "war-room") {
+         setWarRoomTeamFilter(null);
+         setActiveSection("war-room");
+
+         const postUuid = params.get("post");
+
+         if (postUuid) {
+            const matchingEntry = Object.entries(postUuidByNumericId).find(([, uuid]) => uuid === postUuid);
+
+            if (matchingEntry) {
+               setWarRoomFocusRequest({
+                  postId: Number(matchingEntry[0]),
+                  requestId: Date.now(),
+               });
+            }
+         }
+
+         setHasHandledPushDeepLink(true);
+         return;
+      }
+
+      if (section === "profile") {
+         const handle = params.get("handle");
+
+         if (handle && (handle === userProfile.handle || publicProfilesByHandle[handle])) {
+            setViewedProfileHandle(handle);
+         } else {
+            setViewedProfileHandle(userProfile.handle);
+         }
+
+         setActiveSection("profile");
+         setHasHandledPushDeepLink(true);
+         return;
+      }
+
+      setHasHandledPushDeepLink(true);
+   }, [hasHandledPushDeepLink, isAccountLoading, isSocialLoading, postUuidByNumericId, publicProfilesByHandle, userProfile.handle]);
 
    async function handleMarkNotificationRead(notificationId: number) {
       const notificationUuid = notificationUuidByNumericId[notificationId];

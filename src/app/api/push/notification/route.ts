@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { sendPushToUser } from "@/lib/push/sendPush";
+import { sendPushToUser, type PushPreferenceKey } from "@/lib/push/sendPush";
 
 type NotificationWebhookPayload = {
    type?: string;
@@ -20,6 +20,8 @@ type NotificationWebhookPayload = {
    };
 };
 
+type NotificationRecord = NonNullable<NotificationWebhookPayload["record"]>;
+
 function getAdminSupabase() {
    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
@@ -37,8 +39,44 @@ function getAdminSupabase() {
    });
 }
 
-function getNotificationUrl(notification: NonNullable<NotificationWebhookPayload["record"]>) {
+function getPreferenceKey(notification: NotificationRecord): PushPreferenceKey | undefined {
+   const notificationType = notification.type?.toLowerCase() ?? "";
+
+   const searchableCopy = `${notification.title ?? ""} ${notification.body ?? ""}`.toLowerCase();
+
+   if (notificationType === "mention" || searchableCopy.includes("mentioned you") || searchableCopy.includes("mention")) {
+      return "mentions_enabled";
+   }
+
+   if (notificationType === "reply") {
+      return "replies_enabled";
+   }
+
+   if (notificationType === "follow") {
+      return "follows_enabled";
+   }
+
+   if (notificationType === "milestone") {
+      return "milestones_enabled";
+   }
+
+   if (notificationType === "comment") {
+      return "receipt_comments_enabled";
+   }
+
+   return undefined;
+}
+
+async function getNotificationUrl(notification: NotificationRecord, admin: ReturnType<typeof getAdminSupabase>) {
    if (notification.type === "follow") {
+      if (notification.actor_id) {
+         const { data: actorProfile } = await admin.from("profiles").select("handle").eq("id", notification.actor_id).maybeSingle();
+
+         if (actorProfile?.handle) {
+            return `/?section=profile&handle=${encodeURIComponent(actorProfile.handle)}`;
+         }
+      }
+
       return "/?section=profile";
    }
 
@@ -70,7 +108,7 @@ export async function POST(request: NextRequest) {
 
       const notification = payload.record;
 
-      if (payload.type !== "INSERT" || payload.schema !== "public" || payload.table !== "notifications" || !notification?.id || !notification.recipient_id || !notification.title || !notification.body) {
+      if (payload.type !== "INSERT" || payload.schema !== "public" || payload.table !== "notifications" || !notification?.id || !notification.recipient_id || !notification.title) {
          return NextResponse.json({
             ok: true,
             ignored: true,
@@ -101,11 +139,21 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-         const result = await sendPushToUser(notification.recipient_id, {
-            title: notification.title,
-            body: notification.body,
-            url: getNotificationUrl(notification),
-         });
+         const preferenceKey = getPreferenceKey(notification);
+
+         const notificationUrl = await getNotificationUrl(notification, admin);
+
+         const result = await sendPushToUser(
+            notification.recipient_id,
+            {
+               title: notification.title,
+               body: notification.body?.trim() || "You have new FrontOffice activity.",
+               url: notificationUrl,
+            },
+            {
+               preferenceKey,
+            },
+         );
 
          const status = result.delivered > 0 ? "delivered" : "no_subscription";
 
@@ -123,6 +171,7 @@ export async function POST(request: NextRequest) {
          return NextResponse.json({
             ok: true,
             status,
+            preferenceKey: preferenceKey ?? null,
             ...result,
          });
       } catch (error) {
