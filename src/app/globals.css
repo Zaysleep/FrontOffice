@@ -1,26 +1,42 @@
 @import "tailwindcss";
 
+/*
+  FrontOffice global styles
+
+  The app uses Tailwind for most styling, but this file keeps global behavior
+  consistent across browsers and improves accessibility defaults.
+*/
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+   --background: #fff8ee;
+   --foreground: #111827;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+   /*
+    Smooth scrolling is helpful for future same-page navigation.
+    The app is still fully usable without motion-based interactions.
+  */
+   scroll-behavior: smooth;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+   background: var(--background);
+   color: var(--foreground);
+}
+
+/*
+  This makes keyboard focus visible across the app.
+  Individual components also use Tailwind focus rings.
+*/
+:focus-visible {
+   outline: 3px solid #1e40af;
+   outline-offset: 3px;
+}
+
+/*
+  Prevents accidental horizontal scrolling on smaller screens.
+*/
+* {
+   box-sizing: border-box;
 }

@@ -1,0 +1,559 @@
+"use client";
+
+import {
+   useEffect,
+   useState,
+   type FormEvent,
+   type ReactNode,
+} from "react";
+import { supabase } from "@/lib/supabase/client";
+import AccountOnboarding from "@/components/frontoffice/AccountOnboarding";
+
+type AuthMode = "sign-in" | "sign-up";
+
+type AuthGateProps = {
+   children: ReactNode;
+};
+
+function normalizeHandle(value: string) {
+   const compact = value.trim().replace(/\s+/g, "").toLowerCase();
+
+   if (!compact) return "";
+
+   return compact.startsWith("@") ? compact : `@${compact}`;
+}
+
+function isAdult(birthDate: string) {
+   const birth = new Date(`${birthDate}T00:00:00`);
+
+   if (Number.isNaN(birth.getTime())) return false;
+
+   const today = new Date();
+   const threshold = new Date(
+      today.getFullYear() - 18,
+      today.getMonth(),
+      today.getDate(),
+   );
+
+   return birth <= threshold;
+}
+
+export default function AuthGate({ children }: AuthGateProps) {
+   const [mode, setMode] = useState<AuthMode>("sign-in");
+   const [email, setEmail] = useState("");
+   const [name, setName] = useState("");
+   const [handle, setHandle] = useState("");
+   const [birthDate, setBirthDate] = useState("");
+   const [password, setPassword] = useState("");
+   const [confirmPassword, setConfirmPassword] = useState("");
+   const [acceptedPolicies, setAcceptedPolicies] = useState(false);
+   const [handleStatus, setHandleStatus] = useState<
+      "idle" | "checking" | "available" | "unavailable"
+   >("idle");
+   const [isLoading, setIsLoading] = useState(true);
+   const [isSubmitting, setIsSubmitting] = useState(false);
+   const [message, setMessage] = useState("");
+   const [isAuthenticated, setIsAuthenticated] = useState(false);
+   const [needsOnboarding, setNeedsOnboarding] = useState(false);
+
+   useEffect(() => {
+      let isMounted = true;
+
+      async function loadSession() {
+         const { data, error } = await supabase.auth.getSession();
+
+         if (!isMounted) return;
+
+         if (error) {
+            setMessage(error.message);
+            setIsLoading(false);
+            return;
+         }
+
+         const session = data.session;
+         setIsAuthenticated(Boolean(session));
+
+         if (!session) {
+            setNeedsOnboarding(false);
+            setIsLoading(false);
+            return;
+         }
+
+         const { data: profile, error: profileError } = await supabase
+            .from("profiles")
+            .select("onboarding_complete")
+            .eq("id", session.user.id)
+            .maybeSingle();
+
+         if (!isMounted) return;
+
+         if (profileError) {
+            setMessage(profileError.message);
+            setIsLoading(false);
+            return;
+         }
+
+         if (!profile) {
+            await supabase.auth.signOut();
+
+            if (!isMounted) return;
+
+            setIsAuthenticated(false);
+            setNeedsOnboarding(false);
+            setMessage(
+               "Your previous test session was cleared. Create a new account to continue.",
+            );
+            setIsLoading(false);
+            return;
+         }
+
+         setNeedsOnboarding(profile.onboarding_complete !== true);
+         setIsLoading(false);
+      }
+
+      void loadSession();
+
+      const {
+         data: { subscription },
+      } = supabase.auth.onAuthStateChange((_event, session) => {
+         if (!isMounted) return;
+
+         setIsAuthenticated(Boolean(session));
+
+         if (!session) {
+            setNeedsOnboarding(false);
+            setIsLoading(false);
+            return;
+         }
+
+         void loadSession();
+      });
+
+      return () => {
+         isMounted = false;
+         subscription.unsubscribe();
+      };
+   }, []);
+
+   async function checkHandleAvailability() {
+      const normalizedHandle = normalizeHandle(handle);
+
+      if (!/^@[a-z0-9_]{2,29}$/.test(normalizedHandle)) {
+         setHandleStatus("unavailable");
+         return false;
+      }
+
+      setHandleStatus("checking");
+
+      const { data, error } = await supabase.rpc(
+         "is_handle_available",
+         {
+            candidate_handle: normalizedHandle,
+         },
+      );
+
+      if (error) {
+         setHandleStatus("idle");
+         setMessage(error.message);
+         return false;
+      }
+
+      const isAvailable = data === true;
+      setHandleStatus(isAvailable ? "available" : "unavailable");
+
+      return isAvailable;
+   }
+
+   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+      event.preventDefault();
+
+      const normalizedEmail = email.trim().toLowerCase();
+      const normalizedHandle = normalizeHandle(handle);
+
+      if (!normalizedEmail || password.length < 8) {
+         setMessage(
+            "Use a valid email and a password with at least 8 characters.",
+         );
+         return;
+      }
+
+      if (mode === "sign-up") {
+         if (!name.trim() || name.trim().length > 50) {
+            setMessage(
+               "Enter a display name with 50 characters or fewer.",
+            );
+            return;
+         }
+
+         if (!/^@[a-z0-9_]{2,29}$/.test(normalizedHandle)) {
+            setMessage(
+               "Username must be 3–30 characters using letters, numbers, or underscores.",
+            );
+            return;
+         }
+
+         if (password !== confirmPassword) {
+            setMessage("Passwords do not match.");
+            return;
+         }
+
+         if (!birthDate || !isAdult(birthDate)) {
+            setMessage(
+               "You must be 18 or older to create a FrontOffice account.",
+            );
+            return;
+         }
+
+         if (!acceptedPolicies) {
+            setMessage(
+               "You must agree to the Terms and Privacy Policy to continue.",
+            );
+            return;
+         }
+      }
+
+      setIsSubmitting(true);
+      setMessage("");
+
+      try {
+         if (mode === "sign-up") {
+            const handleAvailable = await checkHandleAvailability();
+
+            if (!handleAvailable) {
+               setMessage(
+                  "That username is already taken or unavailable.",
+               );
+               return;
+            }
+
+            const { data, error } = await supabase.auth.signUp({
+               email: normalizedEmail,
+               password,
+               options: {
+                  data: {
+                     name: name.trim(),
+                     handle: normalizedHandle,
+                     birth_date: birthDate,
+                  },
+               },
+            });
+
+            if (error) throw error;
+
+            if (!data.session) {
+               setMode("sign-in");
+               setPassword("");
+               setConfirmPassword("");
+               setMessage(
+                  "Account created. Verify your email, then sign in.",
+               );
+            }
+         } else {
+            const { error } =
+               await supabase.auth.signInWithPassword({
+                  email: normalizedEmail,
+                  password,
+               });
+
+            if (error) throw error;
+         }
+      } catch (error) {
+         setMessage(
+            error instanceof Error
+               ? error.message
+               : "Authentication failed. Please try again.",
+         );
+      } finally {
+         setIsSubmitting(false);
+      }
+   }
+
+   function switchMode(nextMode: AuthMode) {
+      setMode(nextMode);
+      setMessage("");
+      setPassword("");
+      setConfirmPassword("");
+      setHandleStatus("idle");
+   }
+
+   if (isLoading) {
+      return (
+         <main className="flex min-h-screen items-center justify-center bg-[#F6F7F8] px-4 text-[#111827]">
+            <div className="border border-[#111827] bg-white px-6 py-8 text-center">
+               <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#C2410C]">
+                  FrontOffice
+               </p>
+               <p className="mt-2 text-xl font-black uppercase tracking-[-0.02em]">
+                  Opening the office...
+               </p>
+            </div>
+         </main>
+      );
+   }
+
+   if (isAuthenticated && needsOnboarding) {
+      return (
+         <AccountOnboarding
+            onComplete={() => setNeedsOnboarding(false)}
+         />
+      );
+   }
+
+   if (isAuthenticated) return children;
+
+   return (
+      <main className="min-h-screen bg-[#F6F7F8] px-4 py-8 text-[#111827] sm:px-6 lg:px-8">
+         <div className="mx-auto grid min-h-[calc(100vh-4rem)] max-w-6xl overflow-hidden border border-[#111827] bg-white lg:grid-cols-[1.05fr_0.95fr]">
+            <section className="flex flex-col justify-between border-b border-[#111827] bg-[#FFF8EE] p-6 sm:p-8 lg:border-b-0 lg:border-r lg:p-10">
+               <div>
+                  <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#C2410C]">
+                     FrontOffice
+                  </p>
+
+                  <h1 className="mt-3 max-w-xl text-4xl font-black uppercase leading-[0.96] tracking-[-0.045em] sm:text-5xl lg:text-6xl">
+                     Be the GM. Make the call. Keep the receipts.
+                  </h1>
+
+                  <p className="mt-6 max-w-xl text-base leading-7 text-[#5B6475] sm:text-lg sm:leading-8">
+                     Create your office, follow the teams you care about,
+                     and join the War Room.
+                  </p>
+               </div>
+
+            </section>
+
+            <section className="flex items-center p-6 sm:p-8 lg:p-10">
+               <div className="w-full">
+                  <div className="grid grid-cols-2 border border-[#111827]">
+                     <AuthTab
+                        label="Sign In"
+                        isActive={mode === "sign-in"}
+                        onClick={() => switchMode("sign-in")}
+                     />
+                     <AuthTab
+                        label="Create Account"
+                        isActive={mode === "sign-up"}
+                        onClick={() => switchMode("sign-up")}
+                     />
+                  </div>
+
+                  <div className="mt-6">
+                     <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#C2410C]">
+                        {mode === "sign-in"
+                           ? "Welcome Back"
+                           : "Open Your Office"}
+                     </p>
+
+                     <h2 className="mt-2 text-3xl font-black uppercase leading-[1.02] tracking-[-0.035em]">
+                        {mode === "sign-in"
+                           ? "Sign In"
+                           : "Create Account"}
+                     </h2>
+                  </div>
+
+                  <form
+                     onSubmit={handleSubmit}
+                     className="mt-6 space-y-5"
+                  >
+                     <FieldLabel label="Email">
+                        <input
+                           type="email"
+                           value={email}
+                           onChange={(event) =>
+                              setEmail(event.target.value)
+                           }
+                           autoComplete="email"
+                           required
+                           className="mt-2 min-h-12 w-full border border-[#111827] bg-white px-3 text-base text-[#111827] outline-none focus:border-[#1E40AF] focus:ring-4 focus:ring-[#1E40AF]/10"
+                        />
+                     </FieldLabel>
+
+                     {mode === "sign-up" && (
+                        <>
+                           <FieldLabel label="Display Name">
+                              <input
+                                 type="text"
+                                 value={name}
+                                 onChange={(event) =>
+                                    setName(event.target.value)
+                                 }
+                                 autoComplete="name"
+                                 maxLength={50}
+                                 required
+                                 className="mt-2 min-h-12 w-full border border-[#111827] bg-white px-3 text-base text-[#111827] outline-none focus:border-[#1E40AF] focus:ring-4 focus:ring-[#1E40AF]/10"
+                              />
+                           </FieldLabel>
+
+                           <FieldLabel label="Username">
+                              <div className="mt-2 grid grid-cols-[1fr_auto]">
+                                 <input
+                                    type="text"
+                                    value={handle}
+                                    onChange={(event) => {
+                                       setHandle(event.target.value);
+                                       setHandleStatus("idle");
+                                    }}
+                                    onBlur={() => {
+                                       void checkHandleAvailability();
+                                    }}
+                                    autoComplete="username"
+                                    maxLength={30}
+                                    required
+                                    placeholder="yourusername"
+                                    className="min-h-12 w-full border border-r-0 border-[#111827] bg-white px-3 text-base text-[#111827] outline-none focus:border-[#1E40AF] focus:ring-4 focus:ring-[#1E40AF]/10"
+                                 />
+
+                                 <div className="flex min-w-28 items-center justify-center border border-[#111827] bg-[#FFF8EE] px-3 text-[11px] font-black uppercase tracking-[0.1em]">
+                                    {handleStatus === "checking" && "Checking"}
+                                    {handleStatus === "available" && "Available"}
+                                    {handleStatus === "unavailable" && "Unavailable"}
+                                    {handleStatus === "idle" && "Public"}
+                                 </div>
+                              </div>
+
+                              <p className="mt-2 text-xs leading-5 text-[#5B6475]">
+                                 3–30 characters. Letters, numbers, and underscores only.
+                              </p>
+                           </FieldLabel>
+
+                           <FieldLabel label="Date of Birth">
+                              <input
+                                 type="date"
+                                 value={birthDate}
+                                 onChange={(event) =>
+                                    setBirthDate(event.target.value)
+                                 }
+                                 required
+                                 className="mt-2 min-h-12 w-full border border-[#111827] bg-white px-3 text-base text-[#111827] outline-none focus:border-[#1E40AF] focus:ring-4 focus:ring-[#1E40AF]/10"
+                              />
+
+                              <p className="mt-2 text-xs leading-5 text-[#5B6475]">
+                                 You must be 18 or older. Your birth date is not shown publicly.
+                              </p>
+                           </FieldLabel>
+                        </>
+                     )}
+
+                     <FieldLabel label="Password">
+                        <input
+                           type="password"
+                           value={password}
+                           onChange={(event) =>
+                              setPassword(event.target.value)
+                           }
+                           autoComplete={
+                              mode === "sign-in"
+                                 ? "current-password"
+                                 : "new-password"
+                           }
+                           minLength={8}
+                           required
+                           className="mt-2 min-h-12 w-full border border-[#111827] bg-white px-3 text-base text-[#111827] outline-none focus:border-[#1E40AF] focus:ring-4 focus:ring-[#1E40AF]/10"
+                        />
+                     </FieldLabel>
+
+                     {mode === "sign-up" && (
+                        <>
+                           <FieldLabel label="Confirm Password">
+                              <input
+                                 type="password"
+                                 value={confirmPassword}
+                                 onChange={(event) =>
+                                    setConfirmPassword(event.target.value)
+                                 }
+                                 autoComplete="new-password"
+                                 minLength={8}
+                                 required
+                                 className="mt-2 min-h-12 w-full border border-[#111827] bg-white px-3 text-base text-[#111827] outline-none focus:border-[#1E40AF] focus:ring-4 focus:ring-[#1E40AF]/10"
+                              />
+                           </FieldLabel>
+
+                           <label className="flex items-start gap-3 border border-[#111827] bg-[#FFF8EE] px-4 py-3">
+                              <input
+                                 type="checkbox"
+                                 checked={acceptedPolicies}
+                                 onChange={(event) =>
+                                    setAcceptedPolicies(
+                                       event.target.checked,
+                                    )
+                                 }
+                                 required
+                                 className="mt-1 h-4 w-4 accent-[#1E40AF]"
+                              />
+                              <span className="text-sm leading-6 text-[#5B6475]">
+                                 I confirm that I am at least 18 years old
+                                 and agree to the FrontOffice Terms and
+                                 Privacy Policy.
+                              </span>
+                           </label>
+                        </>
+                     )}
+
+                     {message && (
+                        <div
+                           role="status"
+                           className="border border-[#111827] bg-[#FFF8EE] px-4 py-3 text-sm leading-6 text-[#5B6475]"
+                        >
+                           {message}
+                        </div>
+                     )}
+
+                     <button
+                        type="submit"
+                        disabled={isSubmitting}
+                        className="min-h-12 w-full border border-[#1E40AF] bg-[#1E40AF] px-5 text-xs font-black uppercase tracking-[0.12em] text-white transition hover:bg-[#173487] focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/30 disabled:cursor-not-allowed disabled:opacity-60"
+                     >
+                        {isSubmitting
+                           ? "Working..."
+                           : mode === "sign-in"
+                             ? "Enter FrontOffice"
+                             : "Create Account"}
+                     </button>
+                  </form>
+               </div>
+            </section>
+         </div>
+      </main>
+   );
+}
+
+function FieldLabel({
+   label,
+   children,
+}: {
+   label: string;
+   children: ReactNode;
+}) {
+   return (
+      <label className="block">
+         <span className="text-[11px] font-black uppercase tracking-[0.16em] text-[#5B6475]">
+            {label}
+         </span>
+         {children}
+      </label>
+   );
+}
+
+function AuthTab({
+   label,
+   isActive,
+   onClick,
+}: {
+   label: string;
+   isActive: boolean;
+   onClick: () => void;
+}) {
+   return (
+      <button
+         type="button"
+         onClick={onClick}
+         className={`min-h-12 border-r border-[#111827] px-3 text-xs font-black uppercase tracking-[0.12em] transition last:border-r-0 focus:outline-none focus:ring-4 focus:ring-inset focus:ring-[#1E40AF]/20 ${
+            isActive
+               ? "bg-[#111827] text-white"
+               : "bg-white text-[#5B6475] hover:bg-[#FFF8EE] hover:text-[#111827]"
+         }`}
+      >
+         {label}
+      </button>
+   );
+}
