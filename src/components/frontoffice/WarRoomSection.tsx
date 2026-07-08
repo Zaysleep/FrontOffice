@@ -413,106 +413,82 @@ function PostCard({
    return (
       <article className="overflow-hidden bg-white transition hover:bg-[#FFFCF6]">
          <div className="p-4 sm:p-6 md:p-7">
-            <div className="grid grid-cols-[48px_minmax(0,1fr)] gap-3 sm:grid-cols-[auto_auto_minmax(0,1fr)] sm:gap-4">
+            <div className="grid grid-cols-[48px_minmax(0,1fr)] gap-3 sm:gap-5">
                <VoteColumn post={post} userVote={userVote} onUserVote={onUserVote} isDisabled={isBlockedAuthor} />
 
-               <div className="hidden sm:block">
-                  {authorHandle ? (
-                     <button
-                        type="button"
-                        onClick={() => onOpenProfile(authorHandle)}
-                        aria-label={`Open ${authorName}'s profile`}
-                        className="min-h-11 min-w-11 h-fit shrink-0 rounded-full transition hover:ring-4 hover:ring-[#1E40AF]/20 focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/30"
-                     >
-                        <UserAvatar
-                           name={post.author?.isCurrentUser ? currentUserProfile.name : authorName}
-                           initials={post.author?.isCurrentUser ? currentUserProfile.initials : (post.author?.initials ?? getInitials(authorName))}
-                           profileImageUrl={post.author?.isCurrentUser ? currentUserProfile.profileImageUrl : publicAuthorProfile?.profileImageUrl}
-                           size="post"
-                        />
-                     </button>
-                  ) : (
-                     <UserAvatar name={authorName} initials={post.author?.initials ?? getInitials(authorName)} size="post" />
-                  )}
-               </div>
-
                <div className="min-w-0 flex-1">
-                  <div className="space-y-3 sm:space-y-0">
-                     <div className="flex min-w-0 items-start gap-3 sm:block">
-                        <div className="shrink-0 sm:hidden">
+                  <div className="flex min-w-0 items-start gap-3">
+                     <div className="shrink-0">
+                        {authorHandle ? (
+                           <button
+                              type="button"
+                              onClick={() => onOpenProfile(authorHandle)}
+                              aria-label={`Open ${authorName}'s profile`}
+                              className="flex min-h-11 min-w-11 items-center justify-center rounded-full transition hover:ring-4 hover:ring-[#1E40AF]/20 focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/30"
+                           >
+                              <UserAvatar
+                                 name={post.author?.isCurrentUser ? currentUserProfile.name : authorName}
+                                 initials={post.author?.isCurrentUser ? currentUserProfile.initials : (post.author?.initials ?? getInitials(authorName))}
+                                 profileImageUrl={post.author?.isCurrentUser ? currentUserProfile.profileImageUrl : publicAuthorProfile?.profileImageUrl}
+                                 size="post"
+                              />
+                           </button>
+                        ) : (
+                           <UserAvatar name={authorName} initials={post.author?.initials ?? getInitials(authorName)} size="post" />
+                        )}
+                     </div>
+
+                     <div className="min-w-0 flex-1">
+                        <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
                            {authorHandle ? (
                               <button
                                  type="button"
                                  onClick={() => onOpenProfile(authorHandle)}
-                                 aria-label={`Open ${authorName}'s profile`}
-                                 className="flex min-h-11 min-w-11 items-center justify-center rounded-full transition hover:ring-4 hover:ring-[#1E40AF]/20 focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/30"
+                                 className="w-fit max-w-full truncate text-left text-sm font-black text-[#111827] transition hover:text-[#1E40AF] hover:underline focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/20"
                               >
-                                 <UserAvatar
-                                    name={post.author?.isCurrentUser ? currentUserProfile.name : authorName}
-                                    initials={post.author?.isCurrentUser ? currentUserProfile.initials : (post.author?.initials ?? getInitials(authorName))}
-                                    profileImageUrl={post.author?.isCurrentUser ? currentUserProfile.profileImageUrl : publicAuthorProfile?.profileImageUrl}
-                                    size="post"
-                                 />
+                                 {authorName}
                               </button>
                            ) : (
-                              <UserAvatar name={authorName} initials={post.author?.initials ?? getInitials(authorName)} size="post" />
+                              <p className="truncate text-sm font-black text-[#111827]">{authorName}</p>
                            )}
-                        </div>
 
-                        <div className="min-w-0 flex-1 sm:flex sm:items-start sm:justify-between sm:gap-4">
-                           <div className="min-w-0">
-                              <div className="flex flex-col gap-1 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
-                                 {authorHandle ? (
-                                    <button
-                                       type="button"
-                                       onClick={() => onOpenProfile(authorHandle)}
-                                       className="w-fit max-w-full truncate text-left font-bold text-[#111827] transition hover:text-[#1E40AF] hover:underline focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/20"
-                                    >
-                                       {authorName}
-                                    </button>
-                                 ) : (
-                                    <p className="truncate font-black text-[#111827]">{authorName}</p>
-                                 )}
-
-                                 {authorHandle && (
-                                    <>
-                                       <span className="hidden text-[#5B6475] sm:inline">·</span>
-
-                                       <button
-                                          type="button"
-                                          onClick={() => onOpenProfile(authorHandle)}
-                                          className="w-fit max-w-full truncate text-left font-medium text-[#5B6475] transition hover:text-[#1E40AF] hover:underline focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/20"
-                                       >
-                                          {authorHandle}
-                                       </button>
-                                    </>
-                                 )}
-
+                           {authorHandle && (
+                              <>
                                  <span className="hidden text-[#5B6475] sm:inline">·</span>
 
-                                 <p className="truncate font-medium text-[#5B6475]">{post.team}</p>
-                              </div>
-                           </div>
-
-                           <div className="mt-2 flex items-center justify-between gap-2 sm:mt-0 sm:shrink-0 sm:justify-end">
-                              <time dateTime={post.createdAt} className="text-xs font-medium text-[#8A93A3]">
-                                 {formatPostDate(post.createdAt)}
-                              </time>
-
-                              {canDeletePost && (
                                  <button
                                     type="button"
-                                    onClick={() => onDeletePost(post.id)}
-                                    className="flex min-h-11 min-w-11 shrink-0 items-center justify-center border border-transparent text-[#5B6475] transition hover:border-[#C2410C] hover:bg-[#FFF1E8] hover:text-[#C2410C] focus:outline-none focus:ring-4 focus:ring-[#C2410C]/20"
-                                    aria-label="Delete this post"
-                                    title="Delete post"
+                                    onClick={() => onOpenProfile(authorHandle)}
+                                    className="w-fit max-w-full truncate text-left text-sm font-medium text-[#5B6475] transition hover:text-[#1E40AF] hover:underline focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/20"
                                  >
-                                    <Trash2 aria-hidden="true" className="h-4 w-4" />
+                                    {authorHandle}
                                  </button>
-                              )}
+                              </>
+                           )}
 
-                              {!canDeletePost && <ReportDialog title="Report Post" description="Tell us why this War Room post should be reviewed." triggerLabel="Report" onSubmit={(reason, note) => onReportPost(post.id, reason, note)} />}
-                           </div>
+                           <span className="hidden text-[#5B6475] sm:inline">·</span>
+
+                           <p className="truncate text-sm font-medium text-[#5B6475]">{post.team}</p>
+                        </div>
+
+                        <div className="mt-2 flex items-center gap-2">
+                           <time dateTime={post.createdAt} className="text-xs font-medium text-[#8A93A3]">
+                              {formatPostDate(post.createdAt)}
+                           </time>
+
+                           {canDeletePost && (
+                              <button
+                                 type="button"
+                                 onClick={() => onDeletePost(post.id)}
+                                 className="flex min-h-11 min-w-11 shrink-0 items-center justify-center border border-transparent text-[#5B6475] transition hover:border-[#C2410C] hover:bg-[#FFF1E8] hover:text-[#C2410C] focus:outline-none focus:ring-4 focus:ring-[#C2410C]/20"
+                                 aria-label="Delete this post"
+                                 title="Delete post"
+                              >
+                                 <Trash2 aria-hidden="true" className="h-4 w-4" />
+                              </button>
+                           )}
+
+                           {!canDeletePost && <ReportDialog title="Report Post" description="Tell us why this War Room post should be reviewed." triggerLabel="Report" onSubmit={(reason, note) => onReportPost(post.id, reason, note)} />}
                         </div>
                      </div>
                   </div>

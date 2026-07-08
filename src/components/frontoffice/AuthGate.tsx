@@ -30,6 +30,34 @@ function isAdult(birthDate: string) {
    return birth <= threshold;
 }
 
+function getFriendlyAuthMessage(error: unknown) {
+   const rawMessage = error instanceof Error ? error.message : "";
+
+   const message = rawMessage.toLowerCase();
+
+   if (message.includes("email rate limit") || message.includes("rate limit exceeded") || message.includes("too many requests")) {
+      return "Too many verification emails were requested recently. Wait a few minutes, then try again.";
+   }
+
+   if (message.includes("invalid email") || message.includes("email address is invalid") || message.includes("unable to validate email")) {
+      return "Enter a valid email address and try again.";
+   }
+
+   if (message.includes("already registered") || message.includes("user already registered")) {
+      return "An account already exists for that email. Sign in instead.";
+   }
+
+   if (message.includes("invalid login credentials")) {
+      return "The email or password is incorrect.";
+   }
+
+   if (message.includes("email not confirmed")) {
+      return "Verify your email before signing in.";
+   }
+
+   return rawMessage || "Authentication failed. Please try again.";
+}
+
 export default function AuthGate({ children }: AuthGateProps) {
    const [mode, setMode] = useState<AuthMode>("sign-in");
    const [email, setEmail] = useState("");
@@ -151,8 +179,10 @@ export default function AuthGate({ children }: AuthGateProps) {
       const normalizedEmail = email.trim().toLowerCase();
       const normalizedHandle = normalizeHandle(handle);
 
-      if (!normalizedEmail || password.length < 8) {
-         setMessage("Use a valid email and a password with at least 8 characters.");
+      const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail);
+
+      if (!emailLooksValid || password.length < 8) {
+         setMessage("Use a valid email address and a password with at least 8 characters.");
          return;
       }
 
@@ -231,7 +261,7 @@ export default function AuthGate({ children }: AuthGateProps) {
             if (error) throw error;
          }
       } catch (error) {
-         setMessage(error instanceof Error ? error.message : "Authentication failed. Please try again.");
+         setMessage(getFriendlyAuthMessage(error));
       } finally {
          setIsSubmitting(false);
       }
