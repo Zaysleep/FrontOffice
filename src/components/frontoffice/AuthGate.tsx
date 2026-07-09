@@ -120,6 +120,9 @@ export default function AuthGate({ children }: AuthGateProps) {
             return;
          }
 
+         window.localStorage.removeItem("frontoffice_pending_verification_email");
+         setPendingVerificationEmail("");
+
          const { data: profile, error: profileError } = await supabase.from("profiles").select("onboarding_complete").eq("id", session.user.id).maybeSingle();
 
          if (!isMounted) return;
@@ -156,6 +159,13 @@ export default function AuthGate({ children }: AuthGateProps) {
          setIsAuthenticated(Boolean(session));
 
          if (!session) {
+            window.localStorage.removeItem("frontoffice_pending_verification_email");
+
+            setPendingVerificationEmail("");
+            setMode("sign-in");
+            setPassword("");
+            setConfirmPassword("");
+            setMessage("");
             setNeedsOnboarding(false);
             setIsLoading(false);
             return;
