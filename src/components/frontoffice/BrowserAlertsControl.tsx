@@ -72,8 +72,23 @@ export default function BrowserAlertsControl() {
    const [preferences, setPreferences] = useState<NotificationPreferences>(DEFAULT_PREFERENCES);
    const [preferencesLoading, setPreferencesLoading] = useState(true);
    const [savingPreference, setSavingPreference] = useState<keyof NotificationPreferences | null>(null);
+   const [isIOSDevice, setIsIOSDevice] = useState(false);
+   const [isStandaloneApp, setIsStandaloneApp] = useState(false);
 
    useEffect(() => {
+      const userAgent = navigator.userAgent;
+
+      const isIOS = /iPhone|iPad|iPod/i.test(userAgent);
+
+      const navigatorWithStandalone = navigator as Navigator & {
+         standalone?: boolean;
+      };
+
+      const standalone = window.matchMedia("(display-mode: standalone)").matches || navigatorWithStandalone.standalone === true;
+
+      setIsIOSDevice(isIOS);
+      setIsStandaloneApp(standalone);
+
       void initializeNotificationSettings();
    }, []);
 
@@ -399,9 +414,17 @@ export default function BrowserAlertsControl() {
                   <p className="mt-2 max-w-xl text-sm leading-6 text-[#5B6475]">Control whether this browser can show push alerts. Your notification topics are managed separately below.</p>
 
                   {alertState === "unsupported" && (
-                     <p role="status" className="mt-3 text-sm font-bold text-[#C2410C]">
-                        This browser does not support Web Push.
-                     </p>
+                     <div role="status" className="mt-3 border border-[#111827] bg-[#FFF8EE] px-4 py-3">
+                        {isIOSDevice && !isStandaloneApp ? (
+                           <>
+                              <p className="text-sm font-black text-[#111827]">Notifications on iPhone require the FrontOffice Home Screen app.</p>
+
+                              <p className="mt-2 text-sm leading-6 text-[#5B6475]">Add FrontOffice to your Home Screen, open it from the new icon, then return here and enable alerts.</p>
+                           </>
+                        ) : (
+                           <p className="text-sm font-bold text-[#C2410C]">This browser does not support Web Push.</p>
+                        )}
+                     </div>
                   )}
 
                   {alertState === "blocked" && (
