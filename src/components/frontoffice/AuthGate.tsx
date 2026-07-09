@@ -32,7 +32,6 @@ function isAdult(birthDate: string) {
 
 function getFriendlyAuthMessage(error: unknown) {
    const rawMessage = error instanceof Error ? error.message : "";
-
    const message = rawMessage.toLowerCase();
 
    if (message.includes("email rate limit") || message.includes("rate limit exceeded") || message.includes("too many requests")) {
@@ -73,6 +72,30 @@ export default function AuthGate({ children }: AuthGateProps) {
    const [message, setMessage] = useState("");
    const [isAuthenticated, setIsAuthenticated] = useState(false);
    const [needsOnboarding, setNeedsOnboarding] = useState(false);
+   const [pendingVerificationEmail, setPendingVerificationEmail] = useState("");
+   const [resendCooldown, setResendCooldown] = useState(0);
+
+   useEffect(() => {
+      const savedPendingEmail = window.localStorage.getItem("frontoffice_pending_verification_email") ?? "";
+
+      if (savedPendingEmail) {
+         setPendingVerificationEmail(savedPendingEmail);
+      }
+   }, []);
+
+   useEffect(() => {
+      if (resendCooldown <= 0) {
+         return;
+      }
+
+      const timer = window.setInterval(() => {
+         setResendCooldown((seconds) => Math.max(0, seconds - 1));
+      }, 1000);
+
+      return () => {
+         window.clearInterval(timer);
+      };
+   }, [resendCooldown]);
 
    useEffect(() => {
       let isMounted = true;
@@ -179,10 +202,8 @@ export default function AuthGate({ children }: AuthGateProps) {
       const normalizedEmail = email.trim().toLowerCase();
       const normalizedHandle = normalizeHandle(handle);
 
-      const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail);
-
-      if (!emailLooksValid || password.length < 8) {
-         setMessage("Use a valid email address and a password with at least 8 characters.");
+      if (!normalizedEmail || password.length < 8) {
+         setMessage("Use a valid email and a password with at least 8 characters.");
          return;
       }
 
@@ -247,10 +268,13 @@ export default function AuthGate({ children }: AuthGateProps) {
             if (error) throw error;
 
             if (!data.session) {
-               setMode("sign-in");
+               window.localStorage.setItem("frontoffice_pending_verification_email", normalizedEmail);
+
+               setPendingVerificationEmail(normalizedEmail);
                setPassword("");
                setConfirmPassword("");
-               setMessage("Account created. Verify your email, then sign in.");
+               setMessage("");
+               setResendCooldown(60);
             }
          } else {
             const { error } = await supabase.auth.signInWithPassword({
@@ -259,12 +283,66 @@ export default function AuthGate({ children }: AuthGateProps) {
             });
 
             if (error) throw error;
+
+            window.localStorage.removeItem("frontoffice_pending_verification_email");
+            setPendingVerificationEmail("");
          }
+      } catch (error) {
+         setMessage(error instanceof Error ? error.message : "Authentication failed. Please try again.");
+      } finally {
+         setIsSubmitting(false);
+      }
+   }
+
+   async function handleResendVerification() {
+      if (!pendingVerificationEmail || resendCooldown > 0 || isSubmitting) {
+         return;
+      }
+
+      setIsSubmitting(true);
+      setMessage("");
+
+      try {
+         const { error } = await supabase.auth.resend({
+            type: "signup",
+            email: pendingVerificationEmail,
+         });
+
+         if (error) {
+            throw error;
+         }
+
+         setResendCooldown(60);
+         setMessage("Verification email sent. Check your inbox and spam folder.");
       } catch (error) {
          setMessage(getFriendlyAuthMessage(error));
       } finally {
          setIsSubmitting(false);
       }
+   }
+
+   function handleChangeVerificationEmail() {
+      window.localStorage.removeItem("frontoffice_pending_verification_email");
+
+      setPendingVerificationEmail("");
+      setEmail("");
+      setName("");
+      setHandle("");
+      setBirthDate("");
+      setPassword("");
+      setConfirmPassword("");
+      setAcceptedPolicies(false);
+      setHandleStatus("idle");
+      setMessage("");
+      setMode("sign-up");
+   }
+
+   function handleReturnToSignIn() {
+      setMode("sign-in");
+      setEmail(pendingVerificationEmail);
+      setPassword("");
+      setConfirmPassword("");
+      setMessage("");
    }
 
    function switchMode(nextMode: AuthMode) {
@@ -281,6 +359,63 @@ export default function AuthGate({ children }: AuthGateProps) {
             <div className="border border-[#111827] bg-white px-6 py-8 text-center">
                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#C2410C]">FrontOffice</p>
                <p className="mt-2 text-xl font-black uppercase tracking-[-0.02em]">Opening the office...</p>
+            </div>
+         </main>
+      );
+   }
+
+   if (!isAuthenticated && pendingVerificationEmail) {
+      return (
+         <main className="min-h-screen bg-[#F6F7F8] px-3 py-4 text-[#111827] sm:px-6 sm:py-8">
+            <div className="mx-auto max-w-2xl overflow-hidden border border-[#111827] bg-white">
+               <header className="border-b border-[#111827] bg-[#FFF8EE] px-5 py-6 sm:px-7">
+                  <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#C2410C]">FrontOffice Verification</p>
+
+                  <h1 className="mt-2 text-3xl font-black uppercase tracking-[-0.035em] sm:text-4xl">Check Your Email</h1>
+
+                  <p className="mt-3 text-sm leading-6 text-[#5B6475] sm:text-base">We sent a verification link to:</p>
+
+                  <p className="mt-2 break-all text-base font-black text-[#111827]">{pendingVerificationEmail}</p>
+               </header>
+
+               <section className="space-y-5 p-5 sm:p-7">
+                  <div className="border border-[#111827] bg-[#FFF8EE] px-4 py-4">
+                     <p className="text-sm font-bold leading-6 text-[#111827]">Open the verification email, confirm your account, then return here and sign in.</p>
+
+                     <p className="mt-2 text-sm leading-6 text-[#5B6475]">Check your spam or junk folder if you do not see the email after a minute.</p>
+                  </div>
+
+                  {message && (
+                     <div role="status" aria-live="polite" className="border border-[#111827] bg-white px-4 py-3 text-sm leading-6 text-[#5B6475]">
+                        {message}
+                     </div>
+                  )}
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                     <button
+                        type="button"
+                        onClick={() => {
+                           void handleResendVerification();
+                        }}
+                        disabled={isSubmitting || resendCooldown > 0}
+                        className="min-h-12 border border-[#1E40AF] bg-[#1E40AF] px-5 text-xs font-black uppercase tracking-[0.12em] text-white transition hover:bg-[#173487] focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/30 disabled:cursor-not-allowed disabled:opacity-60"
+                     >
+                        {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : isSubmitting ? "Sending..." : "Resend Verification"}
+                     </button>
+
+                     <button
+                        type="button"
+                        onClick={handleReturnToSignIn}
+                        className="min-h-12 border border-[#111827] bg-white px-5 text-xs font-black uppercase tracking-[0.12em] text-[#111827] transition hover:bg-[#F6F7F8] focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/20"
+                     >
+                        Return To Sign In
+                     </button>
+                  </div>
+
+                  <button type="button" onClick={handleChangeVerificationEmail} className="min-h-11 w-full text-sm font-bold text-[#1E40AF] underline-offset-4 hover:underline focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/20">
+                     Use a different email address
+                  </button>
+               </section>
             </div>
          </main>
       );
