@@ -338,11 +338,16 @@ export default function AuthGate({ children }: AuthGateProps) {
    }
 
    function handleReturnToSignIn() {
+      const verifiedEmail = pendingVerificationEmail;
+
+      window.localStorage.removeItem("frontoffice_pending_verification_email");
+
+      setPendingVerificationEmail("");
       setMode("sign-in");
-      setEmail(pendingVerificationEmail);
+      setEmail(verifiedEmail);
       setPassword("");
       setConfirmPassword("");
-      setMessage("");
+      setMessage("Email verified? Sign in below to enter FrontOffice.");
    }
 
    function switchMode(nextMode: AuthMode) {
