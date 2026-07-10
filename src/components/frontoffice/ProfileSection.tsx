@@ -6,9 +6,10 @@ import { Camera, Check, Eye, MessageCircle, ThumbsUp, Trash2, UserRound, X } fro
 import { type FrontOfficeProfile, type Receipt, type TeamBrief, type WarRoomPost } from "@/data/frontofficeData";
 import { supabase } from "@/lib/supabase/client";
 import ImageCropper from "@/components/frontoffice/ImageCropper";
-import { moderateFields, moderateText, FRONT_OFFICE_MODERATION_MESSAGE } from "@/lib/moderation";
+import { moderateFields, FRONT_OFFICE_MODERATION_MESSAGE } from "@/lib/moderation";
 import ReportDialog, { type ReportReason } from "@/components/frontoffice/ReportDialog";
 import BlockDialog from "@/components/frontoffice/BlockDialog";
+import ReceiptStatusSelect from "@/components/frontoffice/ReceiptStatusSelect";
 
 /**
  * ProfileSection
@@ -45,10 +46,17 @@ type ProfileSectionProps = {
    interactionCounts?: Record<number, number>;
    publicProfilesByHandle?: Record<string, FrontOfficeProfile>;
    receipts?: Receipt[];
+
+   /**
+    * Receipt discussion wiring from the production profile flow.
+    * These mappings keep Profile receipts connected to their original
+    * War Room posts while Build 3A changes the status vocabulary.
+    */
    receiptPostIdByReceiptId?: Record<number, number>;
    receiptStatusByPostId?: Record<number, Receipt["status"]>;
    onOpenReceiptDiscussion?: (postId: number) => void;
    onCommentOnReceipt?: (postId: number, body: string) => void | Promise<void>;
+
    onUpdateReceiptStatus?: (receiptId: number, status: Receipt["status"]) => void | Promise<void>;
    onDeleteReceipt?: (receiptId: number) => void | Promise<void>;
    onReportProfile?: (handle: string, reason: ReportReason, note: string) => void | Promise<void>;
@@ -105,6 +113,12 @@ export default function ProfileSection({
    onSaveProfile,
    onOpenProfile,
 }: ProfileSectionProps) {
+   // Build 3A keeps the existing public-receipt discussion contract intact.
+   // These values are used by the production page and remain available for
+   // the next resurfacing/discussion refinement without changing page.tsx.
+   void receiptStatusByPostId;
+   void onCommentOnReceipt;
+
    const activeHandle = viewedProfileHandle ?? currentUserProfile.handle;
 
    const isOwnProfile = activeHandle === currentUserProfile.handle;
@@ -560,9 +574,7 @@ export default function ProfileSection({
                ) : (
                   <div className="divide-y divide-[#111827]">
                      {profilePosts.length > 0 ? (
-                        profilePosts.map((post) => (
-                           <PublicReceiptRow key={post.id} post={post} status={receiptStatusByPostId[post.id]} interactionCount={interactionCounts[post.id] ?? 0} onOpenDiscussion={onOpenReceiptDiscussion} onComment={onCommentOnReceipt} />
-                        ))
+                        profilePosts.map((post) => <ProfileTake key={post.id} post={post} interactionCount={interactionCounts[post.id] ?? 0} currentUserProfile={currentUserProfile} canDelete={false} onDeletePost={onDeletePost} />)
                      ) : (
                         <EmptyProfile isOwnProfile={isOwnProfile} />
                      )}
@@ -574,6 +586,14 @@ export default function ProfileSection({
    );
 }
 
+/**
+ * ReceiptRow
+ *
+ * MK II Build 3A:
+ * - Keeps receipt identity and deletion behavior in ProfileSection.
+ * - Delegates status vocabulary and explanatory copy to ReceiptStatusSelect.
+ * - Avoids duplicating receipt status arrays in multiple UI files.
+ */
 function ReceiptRow({
    receipt,
    postId,
@@ -587,8 +607,6 @@ function ReceiptRow({
    onUpdateStatus?: (receiptId: number, status: Receipt["status"]) => void | Promise<void>;
    onDeleteReceipt?: (receiptId: number) => void | Promise<void>;
 }) {
-   const statuses: Receipt["status"][] = ["Still Cooking", "Called It", "Aged Like Wine", "Aged Like Milk"];
-
    const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
    const [isDeleting, setIsDeleting] = useState(false);
    const [deleteError, setDeleteError] = useState("");
@@ -619,6 +637,10 @@ function ReceiptRow({
                   <span>{receipt.type}</span>
                </div>
 
+               {/*
+                * Keep the receipt connected to the original War Room thread.
+                * The original take remains the source of truth.
+                */}
                {postId && onOpenDiscussion ? (
                   <button
                      type="button"
@@ -656,32 +678,12 @@ function ReceiptRow({
             </div>
          </div>
 
-         <div className="mt-4 flex flex-col gap-3 border-t border-[#E7DCCB] pt-4 sm:flex-row sm:items-end sm:justify-between">
-            <label className="block w-full sm:max-w-52">
-               <span className="text-[11px] font-black uppercase tracking-[0.14em] text-[#5B6475]">Status</span>
-
-               <select
-                  value={receipt.status}
-                  onChange={(event) => onUpdateStatus?.(receipt.id, event.target.value as Receipt["status"])}
-                  className="mt-2 min-h-12 w-full border border-[#111827] bg-white px-3 text-sm font-bold text-[#111827] outline-none focus:border-[#1E40AF] focus:ring-4 focus:ring-[#1E40AF]/10"
-               >
-                  {statuses.map((status) => (
-                     <option key={status} value={status}>
-                        {status}
-                     </option>
-                  ))}
-               </select>
-            </label>
-
-            {postId && onOpenDiscussion && (
-               <button
-                  type="button"
-                  onClick={() => onOpenDiscussion(postId)}
-                  className="min-h-11 w-full border border-[#111827] bg-white px-4 text-xs font-black uppercase tracking-[0.1em] text-[#111827] transition hover:bg-[#FFF8EE] focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/20 sm:w-auto"
-               >
-                  Open Discussion
-               </button>
-            )}
+         <div className="mt-4 border-t border-[#E7DCCB] pt-4">
+            {/*
+             * Only the receipt owner receives the update callback.
+             * The shared selector keeps the six-status language consistent.
+             */}
+            <ReceiptStatusSelect value={receipt.status} disabled={!onUpdateStatus} onChange={(nextStatus) => onUpdateStatus?.(receipt.id, nextStatus)} />
          </div>
 
          {isConfirmingDelete && (
@@ -1019,147 +1021,6 @@ function ProfileAvatar({
       <div aria-hidden="true" className={`${sizeClasses} flex shrink-0 items-center justify-center rounded-full border-4 border-white bg-[#1E40AF] font-bold text-white shadow-sm`}>
          {profile.initials}
       </div>
-   );
-}
-
-function PublicReceiptRow({
-   post,
-   status,
-   interactionCount,
-   onOpenDiscussion,
-   onComment,
-}: {
-   post: WarRoomPost;
-   status?: Receipt["status"];
-   interactionCount: number;
-   onOpenDiscussion?: (postId: number) => void;
-   onComment?: (postId: number, body: string) => void | Promise<void>;
-}) {
-   const [commentDraft, setCommentDraft] = useState("");
-   const [message, setMessage] = useState("");
-   const [isSubmitting, setIsSubmitting] = useState(false);
-
-   async function handleCommentSubmit(event: React.FormEvent<HTMLFormElement>) {
-      event.preventDefault();
-
-      const trimmedComment = commentDraft.trim();
-
-      if (!trimmedComment || !onComment || isSubmitting) {
-         return;
-      }
-
-      const moderation = moderateText(trimmedComment);
-
-      if (!moderation.allowed) {
-         setMessage(moderation.message ?? FRONT_OFFICE_MODERATION_MESSAGE);
-         return;
-      }
-
-      setIsSubmitting(true);
-      setMessage("");
-
-      try {
-         await onComment(post.id, trimmedComment);
-         setCommentDraft("");
-         setMessage("Comment added to the receipt discussion.");
-      } catch (error) {
-         setMessage(error instanceof Error ? error.message : FRONT_OFFICE_MODERATION_MESSAGE);
-      } finally {
-         setIsSubmitting(false);
-      }
-   }
-
-   return (
-      <article className="px-4 py-5 transition hover:bg-[#FFFCF6] sm:px-6 md:px-7">
-         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0 flex-1">
-               <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-[#5B6475]">
-                  <span>{post.team}</span>
-                  <span aria-hidden="true">·</span>
-                  <time dateTime={post.createdAt}>{formatReceiptDate(post.createdAt)}</time>
-               </div>
-
-               <button
-                  type="button"
-                  onClick={() => onOpenDiscussion?.(post.id)}
-                  className="mt-3 block w-full break-words text-left text-lg font-black leading-7 tracking-[-0.01em] text-[#111827] transition hover:text-[#1E40AF] hover:underline focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/20"
-               >
-                  {post.take}
-               </button>
-
-               <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs font-black uppercase tracking-[0.12em]">
-                  <span className="text-[#5B6475]">Confidence · {post.tag}</span>
-
-                  {status && <span className="text-[#1E40AF]">{status}</span>}
-               </div>
-
-               <div className="mt-4 flex flex-wrap items-center gap-5 text-sm font-medium text-[#5B6475]">
-                  <span className="inline-flex items-center gap-1.5">
-                     <MessageCircle aria-hidden="true" className="h-4 w-4" />
-                     {post.comments} comments
-                  </span>
-
-                  <span className="inline-flex items-center gap-1.5">
-                     <ThumbsUp aria-hidden="true" className="h-4 w-4" />
-                     {post.votes} votes
-                  </span>
-
-                  <span className="inline-flex items-center gap-1.5">
-                     <Eye aria-hidden="true" className="h-4 w-4" />
-                     {interactionCount} interactions
-                  </span>
-               </div>
-            </div>
-
-            <button
-               type="button"
-               onClick={() => onOpenDiscussion?.(post.id)}
-               className="min-h-11 w-full shrink-0 border border-[#111827] bg-white px-4 text-xs font-black uppercase tracking-[0.1em] text-[#111827] transition hover:bg-[#FFF8EE] focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/20 sm:w-auto"
-            >
-               Open Discussion
-            </button>
-         </div>
-
-         {onComment && (
-            <form onSubmit={handleCommentSubmit} className="mt-5 border-t border-[#E7DCCB] pt-4">
-               <label className="block">
-                  <span className="text-[11px] font-black uppercase tracking-[0.14em] text-[#5B6475]">Comment on this receipt</span>
-
-                  <textarea
-                     value={commentDraft}
-                     onChange={(event) => {
-                        setCommentDraft(event.target.value);
-                        setMessage("");
-                     }}
-                     maxLength={500}
-                     rows={2}
-                     placeholder="Add to the discussion..."
-                     className="mt-2 min-h-24 w-full resize-y border border-[#111827] bg-white px-3 py-3 text-sm leading-6 text-[#111827] outline-none focus:border-[#1E40AF] focus:ring-4 focus:ring-[#1E40AF]/10"
-                  />
-               </label>
-
-               <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                     <p className="text-xs text-[#5B6475]">{commentDraft.length}/500</p>
-
-                     {message && (
-                        <p role="status" aria-live="polite" className="mt-1 text-sm font-bold text-[#1E40AF]">
-                           {message}
-                        </p>
-                     )}
-                  </div>
-
-                  <button
-                     type="submit"
-                     disabled={!commentDraft.trim() || isSubmitting}
-                     className="min-h-11 w-full border border-[#1E40AF] bg-[#1E40AF] px-4 text-xs font-black uppercase tracking-[0.1em] text-white transition hover:bg-[#173487] focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/30 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
-                  >
-                     {isSubmitting ? "Posting..." : "Add Comment"}
-                  </button>
-               </div>
-            </form>
-         )}
-      </article>
    );
 }
 

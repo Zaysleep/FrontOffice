@@ -111,39 +111,30 @@ export default function BrowserAlertsControl() {
          const userId = await getCurrentUserId();
 
          if (!userId) {
-            setPreferencesLoading(false);
             return;
          }
 
          const { data, error } = await supabase.from("notification_preferences").select("browser_push_enabled, receipt_comments_enabled, replies_enabled, mentions_enabled, follows_enabled, milestones_enabled").eq("user_id", userId).maybeSingle();
 
          if (error) {
-            throw error;
+            console.warn("FrontOffice: Notification preferences are not ready yet; using defaults.", error);
+
+            setPreferences(DEFAULT_PREFERENCES);
+            return;
          }
 
          if (data) {
             setPreferences(data as NotificationPreferences);
-            setPreferencesLoading(false);
             return;
          }
 
-         const { data: created, error: createError } = await supabase
-            .from("notification_preferences")
-            .insert({
-               user_id: userId,
-               ...DEFAULT_PREFERENCES,
-            })
-            .select("browser_push_enabled, receipt_comments_enabled, replies_enabled, mentions_enabled, follows_enabled, milestones_enabled")
-            .single();
-
-         if (createError) {
-            throw createError;
-         }
-
-         setPreferences(created as NotificationPreferences);
-      } catch (error) {
-         console.error("FrontOffice: Could not load notification preferences.", error);
-         setMessage("Notification preferences could not be loaded.");
+         /*
+          * A brand-new account may reach onboarding before a preferences row
+          * has ever been written. That is a normal first-run state, not an
+          * error. Keep the local defaults and create the row only when the
+          * user actually enables browser push or changes a preference.
+          */
+         setPreferences(DEFAULT_PREFERENCES);
       } finally {
          setPreferencesLoading(false);
       }

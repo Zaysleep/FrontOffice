@@ -295,6 +295,7 @@ function FrontOfficeApp() {
    const [warRoomFocusRequest, setWarRoomFocusRequest] = useState<{
       postId: number;
       requestId: number;
+      targetFeed?: "new" | "following" | "trending" | "saved";
    } | null>(null);
 
    const [warRoomTeamFilter, setWarRoomTeamFilter] = useState<string | null>(null);
@@ -461,12 +462,19 @@ function FrontOfficeApp() {
    useEffect(() => {
       let isMounted = true;
 
-      async function loadSharedWarRoom() {
+      async function loadSharedWarRoom(isSilentRefresh = false) {
          if (isAccountLoading || !userProfile.handle) {
             return;
          }
 
-         setIsSocialLoading(true);
+         /**
+          * Build 4 Batch 2:
+          * Background refreshes should not replace the app with the
+          * social-loading screen while a user is reading the War Room.
+          */
+         if (!isSilentRefresh) {
+            setIsSocialLoading(true);
+         }
 
          const {
             data: { user },
@@ -760,7 +768,15 @@ function FrontOfficeApp() {
                nextReceiptUuidMap[numericReceiptId] = receipt.id;
                nextReceiptPostMap[numericReceiptId] = numericPostId;
 
-               const mappedReceipt: Receipt = {
+               /**
+                * Combined Build 3B + 3C:
+                * Reuse receipts.updated_at as the last review timestamp.
+                * This avoids a new migration while still giving resurfacing
+                * logic a reliable cooldown memory.
+                */
+               const mappedReceipt: Receipt & {
+                  lastRevisitedAt?: string | null;
+               } = {
                   id: numericReceiptId,
                   type: post.call_type,
                   team: post.team_name_snapshot,
@@ -769,6 +785,7 @@ function FrontOfficeApp() {
                   status: receipt.status,
                   reaction: "",
                   createdAt: receipt.created_at,
+                  lastRevisitedAt: receipt.updated_at,
                };
 
                return mappedReceipt;
@@ -827,8 +844,19 @@ function FrontOfficeApp() {
 
       void loadSharedWarRoom();
 
+      /**
+       * Lightweight live-feed refresh.
+       *
+       * WarRoomSection buffers newly arrived post IDs and shows the user
+       * a Show New banner instead of reordering the feed under them.
+       */
+      const refreshIntervalId = window.setInterval(() => {
+         void loadSharedWarRoom(true);
+      }, 30_000);
+
       return () => {
          isMounted = false;
+         window.clearInterval(refreshIntervalId);
       };
    }, [isAccountLoading, userProfile.handle]);
 
@@ -1945,6 +1973,18 @@ function FrontOfficeApp() {
       }
 
       setCallForm(initialCallForm);
+
+      /**
+       * Build 4:
+       * A newly created call opens the chronological New feed and
+       * scrolls directly to the exact post that was just created.
+       */
+      setWarRoomFocusRequest({
+         postId: numericPostId,
+         requestId: Date.now(),
+         targetFeed: "new",
+      });
+
       setActiveSection("war-room");
    }
 
@@ -1978,13 +2018,27 @@ function FrontOfficeApp() {
          return;
       }
 
-      const isResolved = status !== "Still Cooking" && status !== "Pending";
+      /**
+       * MK II Build 3A
+       *
+       * Only terminal receipt outcomes set resolved_at.
+       * "Looking Good" and "On the Ropes" are still active calls,
+       * so they remain eligible for future resurfacing.
+       */
+      const terminalStatuses: Receipt["status"][] = ["Cold Take", "Called It", "Legendary"];
+
+      const isResolved = terminalStatuses.includes(status);
+
+      const revisitAt = new Date().toISOString();
 
       const { error } = await supabase
          .from("receipts")
          .update({
             status,
-            resolved_at: isResolved ? new Date().toISOString() : null,
+            resolved_at: isResolved ? revisitAt : null,
+
+            // Status review also counts as a receipt revisit.
+            updated_at: revisitAt,
          })
          .eq("id", receiptUuid);
 
@@ -1999,6 +2053,9 @@ function FrontOfficeApp() {
                ? {
                     ...receipt,
                     status,
+
+                    // Hide the reviewed receipt until its next cadence window.
+                    lastRevisitedAt: revisitAt,
                  }
                : receipt,
          ),
@@ -2012,6 +2069,45 @@ function FrontOfficeApp() {
             [linkedPostId]: status,
          }));
       }
+   }
+
+   /**
+    * Stand By It
+    *
+    * Reaffirms the current status without changing the original take.
+    * Updating `updated_at` starts the next resurfacing cooldown window.
+    */
+   async function handleStandByReceipt(receiptId: number) {
+      const receiptUuid = receiptUuidByNumericId[receiptId];
+
+      if (!receiptUuid) {
+         return;
+      }
+
+      const revisitAt = new Date().toISOString();
+
+      const { error } = await supabase
+         .from("receipts")
+         .update({
+            updated_at: revisitAt,
+         })
+         .eq("id", receiptUuid);
+
+      if (error) {
+         console.error("FrontOffice could not reaffirm the receipt.", error);
+         return;
+      }
+
+      setSavedReceipts((receipts) =>
+         receipts.map((receipt) =>
+            receipt.id === receiptId
+               ? {
+                    ...receipt,
+                    lastRevisitedAt: revisitAt,
+                 }
+               : receipt,
+         ),
+      );
    }
 
    if (isAccountLoading || isSocialLoading) {
@@ -2085,7 +2181,20 @@ function FrontOfficeApp() {
 
                <div className="flex-1 px-3 py-4 sm:px-5 sm:py-5 md:px-6 md:py-6 xl:px-7 xl:py-7">
                   {activeSection === "front-office" && (
-                     <FrontOfficeSection currentBrief={currentBrief} teamUpdates={selectedTeamUpdates} userName={userProfile.name.split(" ")[0] || userProfile.name} reportCopy={frontOfficeCopy} onMakeCall={() => setActiveSection("make-the-call")} />
+                     <FrontOfficeSection
+                        currentBrief={currentBrief}
+                        teamUpdates={selectedTeamUpdates}
+                        userName={userProfile.name.split(" ")[0] || userProfile.name}
+                        reportCopy={frontOfficeCopy}
+                        onMakeCall={() => setActiveSection("make-the-call")}
+                        // Build 3B: pass current-user receipts and the
+                        // existing receipt-to-post discussion mapping.
+                        receipts={savedReceipts}
+                        receiptPostIdByReceiptId={receiptPostIdByReceiptId}
+                        onOpenReceiptDiscussion={handleOpenReceiptDiscussion}
+                        onStandByReceipt={handleStandByReceipt}
+                        onUpdateReceiptStatus={handleUpdateReceiptStatus}
+                     />
                   )}
 
                   {activeSection === "make-the-call" && <MakeTheCallSection currentBrief={currentBrief} callForm={callForm} setCallForm={setCallForm} onPostCall={handlePostCallToWarRoom} currentUserProfile={userProfile} />}

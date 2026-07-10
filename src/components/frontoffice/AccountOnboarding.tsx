@@ -5,6 +5,7 @@ import { Bell, Check, Search } from "lucide-react";
 import { teamBriefs, type TeamBrief } from "@/data/frontofficeData";
 import { supabase } from "@/lib/supabase/client";
 import BrowserAlertsControl from "@/components/frontoffice/BrowserAlertsControl";
+import OnboardingWelcome from "@/components/frontoffice/OnboardingWelcome";
 
 type AccountOnboardingProps = {
    onComplete: () => void;
@@ -12,7 +13,7 @@ type AccountOnboardingProps = {
 
 const MAX_TEAMS = 5;
 
-type SetupStep = "teams" | "alerts";
+type SetupStep = "teams" | "alerts" | "welcome";
 
 export default function AccountOnboarding({ onComplete }: AccountOnboardingProps) {
    const [query, setQuery] = useState("");
@@ -75,6 +76,10 @@ export default function AccountOnboarding({ onComplete }: AccountOnboardingProps
       setSetupStep("alerts");
    }
 
+   if (setupStep === "welcome") {
+      return <OnboardingWelcome selectedTeams={selectedTeams} onEnterFrontOffice={onComplete} />;
+   }
+
    if (setupStep === "alerts") {
       return (
          <main className="min-h-screen bg-[#F6F7F8] px-3 py-4 text-[#111827] sm:px-6 sm:py-8">
@@ -84,7 +89,7 @@ export default function AccountOnboarding({ onComplete }: AccountOnboardingProps
                      <Bell aria-hidden="true" className="h-5 w-5" />
                   </div>
 
-                  <p className="mt-5 text-[11px] font-black uppercase tracking-[0.2em] text-[#C2410C]">FrontOffice Setup · Step 2 of 2</p>
+                  <p className="mt-5 text-[11px] font-black uppercase tracking-[0.2em] text-[#C2410C]">FrontOffice Setup · Step 2 of 3</p>
 
                   <h1 className="mt-2 text-3xl font-black uppercase tracking-[-0.035em] sm:text-4xl">Stay Close To The Conversation</h1>
 
@@ -100,7 +105,7 @@ export default function AccountOnboarding({ onComplete }: AccountOnboardingProps
                <footer className="grid gap-3 border-t border-[#111827] bg-[#FFF8EE] px-4 py-4 sm:flex sm:items-center sm:justify-between sm:px-7">
                   <button
                      type="button"
-                     onClick={onComplete}
+                     onClick={() => setSetupStep("welcome")}
                      className="min-h-12 border border-[#111827] bg-white px-5 text-xs font-black uppercase tracking-[0.12em] text-[#111827] transition hover:bg-[#F6F7F8] focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/20"
                   >
                      Maybe Later
@@ -108,10 +113,10 @@ export default function AccountOnboarding({ onComplete }: AccountOnboardingProps
 
                   <button
                      type="button"
-                     onClick={onComplete}
+                     onClick={() => setSetupStep("welcome")}
                      className="min-h-12 border border-[#1E40AF] bg-[#1E40AF] px-6 text-xs font-black uppercase tracking-[0.12em] text-white transition hover:bg-[#173487] focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/30"
                   >
-                     Enter FrontOffice
+                     Continue
                   </button>
                </footer>
             </div>
@@ -123,7 +128,7 @@ export default function AccountOnboarding({ onComplete }: AccountOnboardingProps
       <main className="min-h-screen bg-[#F6F7F8] px-3 py-4 text-[#111827] sm:px-6 sm:py-8">
          <div className="mx-auto max-w-6xl overflow-hidden border border-[#111827] bg-white">
             <header className="border-b border-[#111827] bg-[#FFF8EE] px-4 py-6 sm:px-7 lg:px-8">
-               <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#C2410C]">FrontOffice Setup · Step 1 of 2</p>
+               <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#C2410C]">FrontOffice Setup · Step 1 of 3</p>
 
                <h1 className="mt-2 text-3xl font-black uppercase tracking-[-0.035em] sm:text-4xl">Build Your Office</h1>
 

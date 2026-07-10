@@ -1,4 +1,4 @@
-import { type TeamBrief, type TeamUpdate } from "@/data/frontofficeData";
+import { type Receipt, type TeamBrief, type TeamUpdate } from "@/data/frontofficeData";
 import { buildFallbackHeadline, buildNewspaperData, getDateline, getLeadUpdate, type BulletinItem } from "@/lib/frontofficeUpdates";
 import { useTeamBulletin } from "@/lib/sports/useTeamBulletin";
 import { useTeamTopReport } from "@/lib/sports/useTeamTopReport";
@@ -8,6 +8,8 @@ import { useTeamRumorMill } from "@/lib/sports/useTeamRumorMill";
 import { useTeamLedger } from "@/lib/sports/useTeamLedger";
 import { getRouteKeyByTeamName } from "@/lib/sports/teamRegistry";
 import { buildQuestionBeforeOffice } from "@/lib/frontOfficeDecisionQuestion";
+import MatchupStrip from "@/components/frontoffice/MatchupStrip";
+import ResurfacedReceiptCard, { selectReceiptForResurfacing, type ReceiptWithRevisit } from "@/components/frontoffice/ResurfacedReceiptCard";
 
 /**
  * FrontOfficeSection
@@ -45,9 +47,28 @@ type FrontOfficeSectionProps = {
    userName: string;
    reportCopy: FrontOfficeReportCopy;
    onMakeCall: () => void;
+
+   /**
+    * Build 3B receipt resurfacing inputs.
+    *
+    * FrontOfficeSection only reads these values. Receipt updates remain
+    * owned by page.tsx so Supabase stays the single persistence path.
+    */
+   receipts?: ReceiptWithRevisit[];
+   receiptPostIdByReceiptId?: Record<number, number>;
+   onOpenReceiptDiscussion?: (postId: number) => void;
+
+   /**
+    * Combined Build 3B + 3C actions.
+    *
+    * Persistence stays in page.tsx. This section only forwards actions
+    * to the resurfaced receipt card.
+    */
+   onStandByReceipt?: (receiptId: number) => void | Promise<void>;
+   onUpdateReceiptStatus?: (receiptId: number, status: Receipt["status"]) => void | Promise<void>;
 };
 
-export default function FrontOfficeSection({ currentBrief, teamUpdates, userName, reportCopy, onMakeCall }: FrontOfficeSectionProps) {
+export default function FrontOfficeSection({ currentBrief, teamUpdates, userName, reportCopy, onMakeCall, receipts = [], receiptPostIdByReceiptId = {}, onOpenReceiptDiscussion, onStandByReceipt, onUpdateReceiptStatus }: FrontOfficeSectionProps) {
    const leadUpdate = getLeadUpdate(teamUpdates);
 
    const newspaperData = buildNewspaperData(currentBrief);
@@ -80,6 +101,12 @@ export default function FrontOfficeSection({ currentBrief, teamUpdates, userName
    });
 
    const personalizedGreeting = reportCopy.greeting.replace("Isaiah", userName);
+
+   /**
+    * Build 3B keeps the daily brief calm by selecting at most one
+    * eligible active receipt for resurfacing.
+    */
+   const resurfacedReceipt = selectReceiptForResurfacing(receipts);
 
    return (
       <section aria-labelledby="front-office-heading" className="space-y-4 sm:space-y-6">
@@ -158,6 +185,12 @@ export default function FrontOfficeSection({ currentBrief, teamUpdates, userName
                </div>
             </div>
          </article>
+
+         <MatchupStrip teamName={currentBrief.team} bulletin={liveBulletin} isLoading={isBulletinLoading} error={bulletinError} />
+
+         {resurfacedReceipt && (
+            <ResurfacedReceiptCard resurfacedReceipt={resurfacedReceipt} postId={receiptPostIdByReceiptId[resurfacedReceipt.receipt.id]} onOpenDiscussion={onOpenReceiptDiscussion} onStandByIt={onStandByReceipt} onUpdateStatus={onUpdateReceiptStatus} />
+         )}
 
          <section aria-label="Daily general manager brief" className="overflow-hidden border border-[#111827] bg-white shadow-sm">
             <div className="grid sm:grid-cols-2 xl:grid-cols-5">

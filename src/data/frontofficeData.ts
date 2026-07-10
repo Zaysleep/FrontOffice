@@ -121,7 +121,15 @@ export type Receipt = {
    team: string;
    call: string;
    confidence: string;
-   status: "Pending" | "Still Cooking" | "Called It" | "Aged Like Wine" | "Aged Like Milk";
+
+   /**
+    * MK II Build 3A
+    *
+    * Receipts use one shared six-stage lifecycle across
+    * Profile, War Room, Supabase, and future resurfacing logic.
+    */
+   status: "Open" | "Looking Good" | "On the Ropes" | "Cold Take" | "Called It" | "Legendary";
+
    reaction: string;
    createdAt: string;
 };
@@ -594,7 +602,7 @@ export const initialReceipts: Receipt[] = [
       team: "Los Angeles Lakers",
       call: "Trade for a defensive wing before chasing another ball-dominant scorer.",
       confidence: "Just Spitballing",
-      status: "Still Cooking",
+      status: "Open",
       reaction: "Ball Knowledge",
       createdAt: "2026-07-05T18:00:00.000Z",
    },
@@ -604,7 +612,7 @@ export const initialReceipts: Receipt[] = [
       team: "San Diego Padres",
       call: "Add bullpen help before the deadline or risk wasting the lineup.",
       confidence: "Just Spitballing",
-      status: "Pending",
+      status: "Open",
       reaction: "Screenshot This",
       createdAt: "2026-07-04T18:00:00.000Z",
    },
@@ -614,7 +622,7 @@ export const initialReceipts: Receipt[] = [
       team: "Manchester United",
       call: "Fix the midfield balance before buying another luxury attacker.",
       confidence: "Just Spitballing",
-      status: "Aged Like Wine",
+      status: "Looking Good",
       reaction: "Front Office Material",
       createdAt: "2026-07-03T18:00:00.000Z",
    },

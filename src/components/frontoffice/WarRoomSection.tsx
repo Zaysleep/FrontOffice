@@ -6,6 +6,9 @@ import { ArrowDown, ArrowUp, Bookmark, Check, Eye, MessageCircle, Send, Share2, 
 import { type FrontOfficeProfile, type Receipt, type WarRoomComment, type WarRoomPost } from "@/data/frontofficeData";
 import { moderateText, FRONT_OFFICE_MODERATION_MESSAGE } from "@/lib/moderation";
 import ReportDialog, { type ReportReason } from "@/components/frontoffice/ReportDialog";
+import NewPostsBanner from "@/components/frontoffice/NewPostsBanner";
+import FollowingFeedNotice from "@/components/frontoffice/FollowingFeedNotice";
+import { sortPostsNewestFirst, sortSavedPostsNewestFirst, sortTrendingPosts as sortBuild4TrendingPosts, type WarRoomFeedView } from "@/lib/warRoomFeed";
 
 /**
  * WarRoomSection
@@ -46,6 +49,13 @@ type WarRoomSectionProps = {
    focusRequest?: {
       postId: number;
       requestId: number;
+
+      /**
+       * New posts can explicitly open in the chronological New feed.
+       * Existing notification/profile deep links can omit this and
+       * continue opening in Trending.
+       */
+      targetFeed?: WarRoomFeedView;
    } | null;
    teamFilter?: string | null;
    onClearTeamFilter?: () => void;
@@ -60,7 +70,7 @@ type WarRoomSectionProps = {
    currentUserProfile: FrontOfficeProfile;
 };
 
-type FeedView = "following" | "trending" | "saved";
+type FeedView = WarRoomFeedView;
 
 type SortMode = "most-active" | "newest" | "most-debated" | "top-voted";
 
@@ -93,13 +103,60 @@ export default function WarRoomSection({
    onOpenProfile,
    currentUserProfile,
 }: WarRoomSectionProps) {
-   const [activeFeed, setActiveFeed] = useState<FeedView>("following");
+   const [activeFeed, setActiveFeed] = useState<FeedView>("new");
 
    const [sortMode, setSortMode] = useState<SortMode>("newest");
 
    const [openDiscussionPostId, setOpenDiscussionPostId] = useState<number | null>(null);
 
    const [copiedPostId, setCopiedPostId] = useState<number | null>(null);
+
+   /**
+    * Build 4 Batch 2:
+    * Keep the posts currently being read stable. New posts are buffered
+    * until the user chooses Show New, while existing cards still receive
+    * fresh vote/comment updates.
+    */
+   const [displayPosts, setDisplayPosts] = useState<WarRoomPost[]>(posts);
+
+   const [pendingNewPostCount, setPendingNewPostCount] = useState(0);
+
+   const knownPostIdsRef = useRef<Set<number>>(new Set(posts.map((post) => post.id)));
+
+   const feedTopRef = useRef<HTMLDivElement | null>(null);
+
+   useEffect(() => {
+      const knownIds = knownPostIdsRef.current;
+
+      const newlyArrivedPosts = posts.filter((post) => !knownIds.has(post.id));
+
+      posts.forEach((post) => {
+         knownIds.add(post.id);
+      });
+
+      const focusedNewPostArrived = focusRequest?.targetFeed === "new" && newlyArrivedPosts.some((post) => post.id === focusRequest.postId);
+
+      if (focusedNewPostArrived) {
+         // The user's own newly created call should appear immediately.
+         setDisplayPosts(posts);
+         setPendingNewPostCount(0);
+         return;
+      }
+
+      if (newlyArrivedPosts.length > 0) {
+         setPendingNewPostCount((count) => count + newlyArrivedPosts.length);
+      }
+
+      setDisplayPosts((currentPosts) => {
+         const currentIds = new Set(currentPosts.map((post) => post.id));
+
+         // Refresh existing cards without inserting buffered new posts.
+         return currentPosts
+            .map((currentPost) => posts.find((post) => post.id === currentPost.id) ?? currentPost)
+            .filter((post) => posts.some((currentPost) => currentPost.id === post.id))
+            .filter((post) => currentIds.has(post.id));
+      });
+   }, [focusRequest?.postId, focusRequest?.targetFeed, posts]);
 
    useEffect(() => {
       if (!teamFilter) {
@@ -115,7 +172,7 @@ export default function WarRoomSection({
          return;
       }
 
-      setActiveFeed("trending");
+      setActiveFeed(focusRequest.targetFeed ?? "trending");
       setOpenDiscussionPostId(focusRequest.postId);
 
       const scrollToPost = () => {
@@ -140,33 +197,69 @@ export default function WarRoomSection({
     * Builds the current feed first,
     * then applies the selected sort mode.
     */
-   const visiblePosts = useMemo(() => {
+   /**
+    * Build 4 Batch 3:
+    * Build the selected feed and track when Following is temporarily
+    * borrowing a small Trending fallback.
+    */
+   const { visiblePosts, isFollowingFallback } = useMemo(() => {
       let feedPosts: WarRoomPost[];
+      let followingFallback = false;
 
-      if (activeFeed === "trending") {
-         feedPosts = sortTrendingPosts(posts);
+      if (activeFeed === "new") {
+         feedPosts = sortPostsNewestFirst(displayPosts);
+      } else if (activeFeed === "trending") {
+         feedPosts = sortBuild4TrendingPosts(displayPosts);
       } else if (activeFeed === "saved") {
-         const savedPosts = posts.filter((post) => savedBookmarks.includes(post.id));
+         const savedPosts = displayPosts.filter((post) => savedBookmarks.includes(post.id));
 
-         feedPosts = sortWarRoomPosts(savedPosts, sortMode);
+         feedPosts = sortSavedPostsNewestFirst(savedPosts);
       } else {
-         const followingPosts = posts.filter((post) => {
+         const followingPosts = displayPosts.filter((post) => {
             const authorHandle = post.author?.handle ?? "";
 
             return post.author?.isCurrentUser === true || followedHandles.includes(authorHandle);
          });
 
-         feedPosts = sortWarRoomPosts(followingPosts, sortMode);
+         if (followingPosts.length > 0) {
+            feedPosts = sortWarRoomPosts(followingPosts, sortMode);
+         } else {
+            followingFallback = true;
+            feedPosts = sortBuild4TrendingPosts(displayPosts).slice(0, 5);
+         }
       }
 
-      if (!teamFilter) {
-         return feedPosts;
+      if (teamFilter) {
+         const normalizedFilter = normalizeTeamName(teamFilter);
+
+         feedPosts = feedPosts.filter((post) => normalizeTeamName(post.team) === normalizedFilter);
       }
 
-      const normalizedFilter = normalizeTeamName(teamFilter);
+      return {
+         visiblePosts: feedPosts,
+         isFollowingFallback: followingFallback,
+      };
+   }, [activeFeed, displayPosts, followedHandles, savedBookmarks, sortMode, teamFilter]);
 
-      return feedPosts.filter((post) => normalizeTeamName(post.team) === normalizedFilter);
-   }, [activeFeed, followedHandles, posts, savedBookmarks, sortMode, teamFilter]);
+   function handleShowNewPosts() {
+      // Reveal the latest snapshot only when the reader asks for it.
+      setDisplayPosts(posts);
+      setPendingNewPostCount(0);
+      setActiveFeed("new");
+      setOpenDiscussionPostId(null);
+
+      window.requestAnimationFrame(() => {
+         /**
+          * Scroll the full War Room section back into view rather than
+          * the sticky feed header. A sticky element is already pinned to
+          * the viewport, so scrolling it into view does not move the page.
+          */
+         feedTopRef.current?.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+         });
+      });
+   }
 
    function handleUserVote(postId: number, nextVote: UserVoteValue) {
       const previousVote = currentUserVotes[postId] ?? 0;
@@ -226,25 +319,21 @@ Team: ${post.team}`;
    }
 
    return (
-      <section aria-labelledby="war-room-heading" className="space-y-4 sm:space-y-6">
-         <header className="border border-[#111827] bg-white px-4 py-5 shadow-sm sm:px-6 md:px-7">
-            <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+      <section ref={feedTopRef} aria-labelledby="war-room-heading" className="space-y-6">
+         <header className="border border-[#111827] bg-white px-5 py-5 shadow-sm sm:px-6 lg:px-7">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                <div>
-                  <h3 id="war-room-heading" className="text-3xl font-black uppercase leading-[0.98] tracking-[-0.04em] text-[#111827] sm:text-4xl md:text-5xl">
+                  <h3 id="war-room-heading" className="text-3xl font-black uppercase leading-[0.98] tracking-[-0.04em] text-[#111827] sm:text-5xl">
                      The Debate Floor
                   </h3>
                </div>
 
-               <label className="flex flex-wrap items-center gap-3 border-t border-[#E7DCCB] pt-4 text-sm font-bold text-[#111827] md:border-t-0 md:pt-0">
+               <label className="flex items-center gap-3 border-t border-[#E7DCCB] pt-4 text-sm font-bold text-[#111827] lg:border-t-0 lg:pt-0">
                   <SlidersHorizontal aria-hidden="true" className="h-4 w-4 text-[#5B6475]" />
 
                   <span className="text-[11px] font-black uppercase tracking-[0.14em] text-[#5B6475]">Sort Edition</span>
 
-                  <select
-                     value={sortMode}
-                     onChange={(event) => setSortMode(event.target.value as SortMode)}
-                     className="min-h-12 border-0 border-b border-[#111827] bg-transparent px-0 text-sm font-black text-[#111827] outline-none focus:border-[#1E40AF] focus:ring-0"
-                  >
+                  <select value={sortMode} onChange={(event) => setSortMode(event.target.value as SortMode)} className="min-h-10 border-0 border-b border-[#111827] bg-transparent px-0 text-sm font-black text-[#111827] outline-none focus:border-[#1E40AF]">
                      <option value="most-active">Most active</option>
                      <option value="newest">Newest</option>
                      <option value="most-debated">Most debated</option>
@@ -254,18 +343,33 @@ Team: ${post.team}`;
             </div>
          </header>
 
-         <div className="sticky top-[72px] z-30 border border-[#111827] bg-[#FFF8EE]/95 backdrop-blur sm:top-[68px]">
-            <nav aria-label="War Room feed views" className="grid grid-cols-3">
+         <div className="sticky top-[64px] z-30 border border-[#111827] bg-[#FFF8EE]/95 backdrop-blur">
+            <nav aria-label="War Room feed views" className="grid grid-cols-4">
+               {/* Build 4 order: New, Following, Trending, Saved. */}
+               <FeedTab label="New" isActive={activeFeed === "new"} onClick={() => setActiveFeed("new")} />
+
                <FeedTab label="Following" isActive={activeFeed === "following"} onClick={() => setActiveFeed("following")} />
 
                <FeedTab label="Trending" isActive={activeFeed === "trending"} onClick={() => setActiveFeed("trending")} />
 
                <FeedTab label="Saved" isActive={activeFeed === "saved"} onClick={() => setActiveFeed("saved")} />
             </nav>
+
+            {/*
+             * Mobile: keep the update control below the tabs so the app
+             * header can never cover it while the sticky region is active.
+             *
+             * Larger screens: right-align the same subtle control.
+             */}
+            {pendingNewPostCount > 0 && (
+               <div className="flex items-center justify-center border-t border-[#E7DCCB] px-2 py-1.5 sm:justify-end sm:px-3 sm:py-2">
+                  <NewPostsBanner count={pendingNewPostCount} onShowNewPosts={handleShowNewPosts} />
+               </div>
+            )}
          </div>
 
          {teamFilter && (
-            <section aria-label={`War Room discussion filtered to ${teamFilter}`} className="flex flex-col gap-3 border border-[#111827] bg-[#FFF8EE] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-7">
+            <section aria-label={`War Room discussion filtered to ${teamFilter}`} className="flex flex-col gap-3 border border-[#111827] bg-[#FFF8EE] px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-7">
                <div>
                   <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#C2410C]">Team Discussion</p>
 
@@ -276,13 +380,15 @@ Team: ${post.team}`;
                   <button
                      type="button"
                      onClick={onClearTeamFilter}
-                     className="min-h-12 w-full border border-[#111827] bg-white px-4 text-xs sm:w-auto font-black uppercase tracking-[0.1em] text-[#111827] transition hover:bg-[#F6F7F8] focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/20"
+                     className="min-h-10 border border-[#111827] bg-white px-4 text-xs font-black uppercase tracking-[0.1em] text-[#111827] transition hover:bg-[#F6F7F8] focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/20"
                   >
                      View All Discussions
                   </button>
                )}
             </section>
          )}
+
+         {activeFeed === "following" && isFollowingFallback && <FollowingFeedNotice />}
 
          <div className="divide-y divide-[#111827] border border-[#111827] bg-white shadow-sm">
             {visiblePosts.length > 0 ? (
@@ -341,7 +447,7 @@ function FeedTab({ label, isActive, onClick }: { label: string; isActive: boolea
       <button
          type="button"
          onClick={onClick}
-         className={`min-h-12 border-r border-[#111827] px-2 text-center text-[11px] sm:px-3 sm:text-xs font-black uppercase tracking-[0.16em] transition last:border-r-0 focus:outline-none focus:ring-4 focus:ring-inset focus:ring-[#1E40AF]/30 ${
+         className={`min-h-12 whitespace-nowrap border-r border-[#111827] px-1 text-center text-[9px] font-black uppercase tracking-[0.07em] transition last:border-r-0 focus:outline-none focus:ring-4 focus:ring-inset focus:ring-[#1E40AF]/30 sm:px-3 sm:text-xs sm:tracking-[0.16em] ${
             isActive ? "bg-[#111827] text-white" : "bg-[#FFF8EE] text-[#111827] hover:bg-white"
          }`}
          aria-current={isActive ? "page" : undefined}
@@ -412,99 +518,113 @@ function PostCard({
 
    return (
       <article className="overflow-hidden bg-white transition hover:bg-[#FFFCF6]">
-         <div className="p-4 sm:p-6 md:p-7">
-            <div className="grid grid-cols-[48px_minmax(0,1fr)] gap-3 sm:gap-5">
+         <div className="p-5 sm:p-6 lg:p-7">
+            {/*
+             * Mobile post layout refinement:
+             * Keep the vote rail narrow, then give the actual post content the
+             * full remaining width. The avatar now lives inside the author row
+             * instead of consuming a permanent third column on small screens.
+             */}
+            <div className="grid grid-cols-[32px_minmax(0,1fr)] gap-3 sm:grid-cols-[40px_minmax(0,1fr)] sm:gap-4">
                <VoteColumn post={post} userVote={userVote} onUserVote={onUserVote} isDisabled={isBlockedAuthor} />
 
-               <div className="min-w-0 flex-1">
-                  <div className="flex min-w-0 items-start gap-3">
-                     <div className="shrink-0">
-                        {authorHandle ? (
-                           <button
-                              type="button"
-                              onClick={() => onOpenProfile(authorHandle)}
-                              aria-label={`Open ${authorName}'s profile`}
-                              className="flex min-h-11 min-w-11 items-center justify-center rounded-full transition hover:ring-4 hover:ring-[#1E40AF]/20 focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/30"
-                           >
-                              <UserAvatar
-                                 name={post.author?.isCurrentUser ? currentUserProfile.name : authorName}
-                                 initials={post.author?.isCurrentUser ? currentUserProfile.initials : (post.author?.initials ?? getInitials(authorName))}
-                                 profileImageUrl={post.author?.isCurrentUser ? currentUserProfile.profileImageUrl : publicAuthorProfile?.profileImageUrl}
-                                 size="post"
-                              />
-                           </button>
-                        ) : (
-                           <UserAvatar name={authorName} initials={post.author?.initials ?? getInitials(authorName)} size="post" />
-                        )}
-                     </div>
+               <div className="min-w-0">
+                  <div className="flex items-start gap-3">
+                     {authorHandle ? (
+                        <button
+                           type="button"
+                           onClick={() => onOpenProfile(authorHandle)}
+                           aria-label={`Open ${authorName}'s profile`}
+                           className="h-fit shrink-0 rounded-full transition hover:ring-4 hover:ring-[#1E40AF]/20 focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/30"
+                        >
+                           <UserAvatar
+                              name={post.author?.isCurrentUser ? currentUserProfile.name : authorName}
+                              initials={post.author?.isCurrentUser ? currentUserProfile.initials : (post.author?.initials ?? getInitials(authorName))}
+                              profileImageUrl={post.author?.isCurrentUser ? currentUserProfile.profileImageUrl : publicAuthorProfile?.profileImageUrl}
+                              size="post"
+                           />
+                        </button>
+                     ) : (
+                        <UserAvatar name={authorName} initials={post.author?.initials ?? getInitials(authorName)} size="post" />
+                     )}
 
                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
-                           {authorHandle ? (
-                              <button
-                                 type="button"
-                                 onClick={() => onOpenProfile(authorHandle)}
-                                 className="w-fit max-w-full truncate text-left text-sm font-black text-[#111827] transition hover:text-[#1E40AF] hover:underline focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/20"
-                              >
-                                 {authorName}
-                              </button>
-                           ) : (
-                              <p className="truncate text-sm font-black text-[#111827]">{authorName}</p>
-                           )}
-
-                           {authorHandle && (
-                              <>
-                                 <span className="hidden text-[#5B6475] sm:inline">·</span>
-
+                        <div className="flex items-start justify-between gap-3">
+                           <div className="min-w-0">
+                              {authorHandle ? (
                                  <button
                                     type="button"
                                     onClick={() => onOpenProfile(authorHandle)}
-                                    className="w-fit max-w-full truncate text-left text-sm font-medium text-[#5B6475] transition hover:text-[#1E40AF] hover:underline focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/20"
+                                    className="block max-w-full truncate text-left text-sm font-black text-[#111827] transition hover:text-[#1E40AF] hover:underline focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/20"
+                                 >
+                                    {authorName}
+                                 </button>
+                              ) : (
+                                 <p className="truncate text-sm font-black text-[#111827]">{authorName}</p>
+                              )}
+
+                              {authorHandle && (
+                                 <button
+                                    type="button"
+                                    onClick={() => onOpenProfile(authorHandle)}
+                                    className="mt-0.5 block max-w-full truncate text-xs font-medium text-[#5B6475] transition hover:text-[#1E40AF] hover:underline focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/20"
                                  >
                                     {authorHandle}
                                  </button>
-                              </>
-                           )}
+                              )}
 
-                           <span className="hidden text-[#5B6475] sm:inline">·</span>
+                              {/*
+                               * Keep the team attached to the author identity
+                               * so the mobile card header has no dead space.
+                               */}
+                              <p className="mt-0.5 text-xs font-medium leading-5 text-[#5B6475]">{post.team}</p>
+                           </div>
 
-                           <p className="truncate text-sm font-medium text-[#5B6475]">{post.team}</p>
-                        </div>
+                           <div className="flex shrink-0 items-center gap-1">
+                              <time dateTime={post.createdAt} className="whitespace-nowrap text-[10px] font-medium text-[#8A93A3] sm:text-xs">
+                                 {formatPostDate(post.createdAt)}
+                              </time>
 
-                        <div className="mt-2 flex items-center gap-2">
-                           <time dateTime={post.createdAt} className="text-xs font-medium text-[#8A93A3]">
-                              {formatPostDate(post.createdAt)}
-                           </time>
+                              {canDeletePost && (
+                                 <button
+                                    type="button"
+                                    onClick={() => onDeletePost(post.id)}
+                                    className="flex min-h-8 min-w-8 shrink-0 items-center justify-center border border-transparent text-[#5B6475] transition hover:border-[#C2410C] hover:bg-[#FFF1E8] hover:text-[#C2410C] focus:outline-none focus:ring-4 focus:ring-[#C2410C]/20"
+                                    aria-label="Delete this post"
+                                    title="Delete post"
+                                 >
+                                    <Trash2 aria-hidden="true" className="h-4 w-4" />
+                                 </button>
+                              )}
 
-                           {canDeletePost && (
-                              <button
-                                 type="button"
-                                 onClick={() => onDeletePost(post.id)}
-                                 className="flex min-h-11 min-w-11 shrink-0 items-center justify-center border border-transparent text-[#5B6475] transition hover:border-[#C2410C] hover:bg-[#FFF1E8] hover:text-[#C2410C] focus:outline-none focus:ring-4 focus:ring-[#C2410C]/20"
-                                 aria-label="Delete this post"
-                                 title="Delete post"
-                              >
-                                 <Trash2 aria-hidden="true" className="h-4 w-4" />
-                              </button>
-                           )}
-
-                           {!canDeletePost && <ReportDialog title="Report Post" description="Tell us why this War Room post should be reviewed." triggerLabel="Report" onSubmit={(reason, note) => onReportPost(post.id, reason, note)} />}
+                              {!canDeletePost && <ReportDialog title="Report Post" description="Tell us why this War Room post should be reviewed." triggerLabel="Report" onSubmit={(reason, note) => onReportPost(post.id, reason, note)} />}
+                           </div>
                         </div>
                      </div>
                   </div>
 
-                  <p className="mt-4 break-words text-[1.05rem] font-black leading-7 tracking-[-0.02em] text-[#111827] sm:text-2xl sm:leading-8">{post.take}</p>
+                  <p className="mt-4 text-lg font-black leading-6 tracking-[-0.02em] text-[#111827] sm:text-2xl sm:leading-8">{post.take}</p>
 
-                  <div className="mt-3 flex flex-col items-start gap-1.5 text-[11px] font-black uppercase tracking-[0.12em] sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4 sm:gap-y-2">
-                     <span className="text-[#5B6475]">Confidence · {post.tag}</span>
+                  {/*
+                   * Receipt metadata is stacked on mobile so long confidence
+                   * labels do not compete with the receipt status badge.
+                   */}
+                  <div className="mt-3 space-y-2 sm:flex sm:flex-wrap sm:items-center sm:gap-2 sm:space-y-0">
+                     <p className="text-[9px] font-black uppercase tracking-[0.08em] text-[#5B6475] sm:text-xs sm:tracking-[0.12em]">
+                        Confidence{" "}
+                        <span aria-hidden="true" className="px-1">
+                           ·
+                        </span>
+                        <span className="text-[#111827]">{post.tag}</span>
+                     </p>
 
-                     {receiptStatus && <span className="text-[#1E40AF]">{receiptStatus}</span>}
+                     {receiptStatus && <span className="inline-flex w-fit border border-[#1E40AF]/25 bg-[#1E40AF]/5 px-2 py-1 text-[9px] font-black uppercase tracking-[0.08em] text-[#1E40AF] sm:text-[10px]">{receiptStatus}</span>}
                   </div>
 
                   {isBlockedAuthor && <div className="mt-4 border border-[#C2410C] bg-[#FFF1E8] px-4 py-3 text-sm font-bold leading-6 text-[#9A3412]">You can view this post, but interactions are unavailable because this account is blocked.</div>}
 
-                  <div className="mt-5 flex flex-col gap-3 border-t border-[#111827] pt-3 sm:mt-6 sm:flex-row sm:items-center sm:justify-between">
-                     <div className="flex w-full flex-wrap items-center gap-1 sm:w-auto">
+                  <div className="mt-5 flex items-center justify-between border-t border-[#111827] pt-3">
+                     <div className="flex items-center gap-1">
                         <CommentButton commentCount={post.comments} isOpen={isDiscussionOpen} onClick={() => onToggleDiscussion(post.id)} />
 
                         <BookmarkButton isBookmarked={isBookmarked} isDisabled={isBlockedAuthor} onClick={() => onToggleBookmark(post.id)} />
@@ -519,7 +639,7 @@ function PostCard({
                      </div>
                   </div>
 
-                  <div className="mt-3 flex items-center gap-2 text-sm font-medium text-[#5B6475] sm:hidden">
+                  <div className="mt-3 flex items-center gap-2 text-xs font-medium text-[#5B6475] sm:hidden">
                      <Eye aria-hidden="true" className="h-4 w-4" />
 
                      <span>{interactions} interactions</span>
@@ -666,8 +786,8 @@ function DiscussionThread({
 
    return (
       <section aria-label={`Discussion for ${post.user}'s post`} className="border-t border-[#111827] bg-[#FFF8EE]">
-         <div className="px-4 py-5 sm:px-6 md:px-7">
-            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+         <div className="px-5 py-5 sm:px-6 lg:px-7">
+            <div className="mb-4 flex items-center justify-between">
                <h4 className="text-xs font-black uppercase tracking-[0.16em] text-[#111827]">Discussion Desk</h4>
 
                <p className="text-sm font-medium text-[#5B6475]">
@@ -708,7 +828,7 @@ function DiscussionThread({
                            />
 
                            {replies.length > 0 && (
-                              <div className="ml-4 border-l border-[#D6CCBC] pl-3 sm:ml-14 sm:pl-4">
+                              <div className="ml-12 border-l border-[#D6CCBC] pl-4 sm:ml-14">
                                  <button
                                     type="button"
                                     onClick={() =>
@@ -717,7 +837,7 @@ function DiscussionThread({
                                           [comment.id]: !threads[comment.id],
                                        }))
                                     }
-                                    className="mb-2 min-h-11 text-xs font-black uppercase tracking-[0.1em] text-[#1E40AF] transition hover:underline focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/20"
+                                    className="mb-2 min-h-9 text-xs font-black uppercase tracking-[0.1em] text-[#1E40AF] transition hover:underline focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/20"
                                     aria-expanded={isReplyThreadOpen}
                                  >
                                     {isReplyThreadOpen ? "Hide replies" : `View ${replies.length} ${replies.length === 1 ? "reply" : "replies"}`}
@@ -751,7 +871,7 @@ function DiscussionThread({
                            )}
 
                            {isReplying && (
-                              <form onSubmit={(event) => handleReplySubmit(event, comment.id)} className="ml-4 mb-4 border-l border-[#111827] pl-3 sm:ml-14 sm:pl-4">
+                              <form onSubmit={(event) => handleReplySubmit(event, comment.id)} className="ml-12 mb-4 border-l border-[#111827] pl-4 sm:ml-14">
                                  <div className="flex gap-3">
                                     <UserAvatar name={currentUserProfile.name} initials={currentUserProfile.initials} profileImageUrl={currentUserProfile.profileImageUrl} size="medium" />
 
@@ -781,14 +901,14 @@ function DiscussionThread({
                                        />
 
                                        <div className="mt-2 flex items-center justify-end gap-2">
-                                          <button type="button" onClick={() => setReplyingToCommentId(null)} className="min-h-11 px-3 text-xs font-black uppercase tracking-[0.1em] text-[#5B6475] hover:text-[#111827]">
+                                          <button type="button" onClick={() => setReplyingToCommentId(null)} className="min-h-9 px-3 text-xs font-black uppercase tracking-[0.1em] text-[#5B6475] hover:text-[#111827]">
                                              Cancel
                                           </button>
 
                                           <button
                                              type="submit"
                                              disabled={!(replyDrafts[comment.id] ?? "").trim()}
-                                             className="inline-flex min-h-11 items-center gap-2 border border-[#1E40AF] bg-[#1E40AF] px-3 text-xs font-black uppercase tracking-[0.1em] text-white transition hover:bg-[#173487] disabled:cursor-not-allowed disabled:opacity-50"
+                                             className="inline-flex min-h-9 items-center gap-2 border border-[#1E40AF] bg-[#1E40AF] px-3 text-xs font-black uppercase tracking-[0.1em] text-white transition hover:bg-[#173487] disabled:cursor-not-allowed disabled:opacity-50"
                                           >
                                              <Send aria-hidden="true" className="h-4 w-4" />
                                              Reply
@@ -809,7 +929,7 @@ function DiscussionThread({
                </div>
             )}
 
-            <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-3 sm:flex-row">
+            <form onSubmit={handleSubmit} className="mt-4 flex gap-3">
                <UserAvatar name={currentUserProfile.name} initials={currentUserProfile.initials} profileImageUrl={currentUserProfile.profileImageUrl} size="medium" />
 
                <div className="min-w-0 flex-1">
@@ -832,7 +952,7 @@ function DiscussionThread({
                      <button
                         type="submit"
                         disabled={!commentDraft.trim()}
-                        className="inline-flex min-h-11 items-center gap-2 border border-[#1E40AF] bg-[#1E40AF] px-4 text-xs font-black uppercase tracking-[0.1em] text-white transition hover:bg-[#173487] focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/30 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="inline-flex min-h-10 items-center gap-2 border border-[#1E40AF] bg-[#1E40AF] px-4 text-xs font-black uppercase tracking-[0.1em] text-white transition hover:bg-[#173487] focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/30 disabled:cursor-not-allowed disabled:opacity-50"
                      >
                         <Send aria-hidden="true" className="h-4 w-4" />
                         Comment
@@ -967,12 +1087,12 @@ function VoteColumn({ post, userVote, onUserVote, isDisabled = false }: { post: 
    const hasDownvoted = userVote === -1;
 
    return (
-      <div className="flex w-11 shrink-0 flex-col items-center">
+      <div className="flex w-8 shrink-0 flex-col items-center text-center sm:w-10">
          <button
             type="button"
             onClick={() => onUserVote(post.id, 1)}
             disabled={isDisabled}
-            className={`flex min-h-9 min-w-9 items-center justify-center border border-[#111827] transition focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/30 disabled:cursor-not-allowed disabled:opacity-40 ${
+            className={`flex h-8 w-8 items-center justify-center border border-[#111827] sm:h-9 sm:w-9 transition focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/30 disabled:cursor-not-allowed disabled:opacity-40 ${
                hasUpvoted ? "bg-[#EAF0FF] text-[#1E40AF]" : "bg-white text-[#5B6475] hover:bg-[#EAF0FF] hover:text-[#1E40AF]"
             }`}
             aria-label={hasUpvoted ? "Remove upvote" : "Upvote this take"}
@@ -982,13 +1102,13 @@ function VoteColumn({ post, userVote, onUserVote, isDisabled = false }: { post: 
             <ArrowUp aria-hidden="true" className="h-5 w-5" />
          </button>
 
-         <p className="my-2 text-sm font-black text-[#111827]">{post.votes}</p>
+         <p className="my-2 w-full text-center text-sm font-black text-[#111827]">{post.votes}</p>
 
          <button
             type="button"
             onClick={() => onUserVote(post.id, -1)}
             disabled={isDisabled}
-            className={`flex min-h-9 min-w-9 items-center justify-center border border-[#111827] transition focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/30 ${
+            className={`flex h-8 w-8 items-center justify-center border border-[#111827] sm:h-9 sm:w-9 transition focus:outline-none focus:ring-4 focus:ring-[#1E40AF]/30 ${
                hasDownvoted ? "bg-[#FFF1E8] text-[#C2410C]" : "bg-white text-[#5B6475] hover:bg-[#FFF1E8] hover:text-[#C2410C]"
             }`}
             aria-label={hasDownvoted ? "Remove downvote" : "Downvote this take"}
@@ -1069,15 +1189,38 @@ function getInitials(name: string) {
 }
 
 function EmptyFeed({ activeFeed }: { activeFeed: FeedView }) {
-   const title = activeFeed === "following" ? "No following takes yet" : activeFeed === "saved" ? "No saved takes yet" : "No trending takes yet";
+   const emptyCopy: Record<
+      FeedView,
+      {
+         title: string;
+         description: string;
+      }
+   > = {
+      new: {
+         title: "No new takes yet",
+         description: "Fresh calls will land here in the order they are posted.",
+      },
+      following: {
+         title: "No following takes yet",
+         description: "Follow more users to build your personal War Room feed.",
+      },
+      trending: {
+         title: "The room is quiet",
+         description: "Calls with fresh debate and momentum will rise here.",
+      },
+      saved: {
+         title: "Your file cabinet is empty",
+         description: "Save the calls worth revisiting. Your bookmarked receipts will stay organized here.",
+      },
+   };
 
-   const description = activeFeed === "following" ? "Follow more users to build your personal War Room feed." : activeFeed === "saved" ? "Bookmark a take in the War Room and it will appear here." : "Trending takes will appear here as the feed grows.";
+   const copy = emptyCopy[activeFeed];
 
    return (
       <div className="bg-white p-10 text-center">
-         <p className="text-lg font-black uppercase tracking-[-0.01em] text-[#111827]">{title}</p>
+         <p className="text-lg font-black uppercase tracking-[-0.01em] text-[#111827]">{copy.title}</p>
 
-         <p className="mt-2 text-base leading-7 text-[#5B6475]">{description}</p>
+         <p className="mt-2 text-base leading-7 text-[#5B6475]">{copy.description}</p>
       </div>
    );
 }
